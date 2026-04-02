@@ -17,9 +17,11 @@ scenarios:
     qa_test:
       enabled: true  # 启用问答测试
       testset_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\测试集\\测试集样例.xlsx"
-      question_column: 2
+      question_column: 2    # 问题所在列（1-based）
+      start_row: 2          # 起始行，跳过表头
+      end_row: null         # 结束行（null 表示到最后）
       knowledge_base_id: "ALL_KB"
-      max_concurrent: 3
+      max_concurrent: 1     # 并发执行数量
 
   demo:
     name: "演示测试场景"
