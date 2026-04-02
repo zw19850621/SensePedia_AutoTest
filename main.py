@@ -5,9 +5,20 @@ SensePedia 自动化测试框架 - 主入口
 import asyncio
 import sys
 import argparse
+import logging
 
 from src.agents import AutoTestAgent
 from src.core import load_config
+
+# 配置日志输出
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 
 async def main_async():

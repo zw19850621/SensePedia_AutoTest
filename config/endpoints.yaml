@@ -50,3 +50,58 @@ endpoints:
     response:
       job_id_field: "job_id"
       status_field: "status"
+
+  # ======================
+  # RAG 问答会话管理
+  # ======================
+
+  # 创建会话
+  rag_create_session:
+    method: "POST"
+    path: "/v1/rag/sessions"
+    body:
+      title: "{title}"
+    response:
+      session_id_field: "session_id"
+      title_field: "title"
+
+  # 获取会话详情
+  rag_get_session:
+    method: "GET"
+    path: "/v1/rag/sessions/{session_id}"
+
+  # 更新会话
+  rag_update_session:
+    method: "PATCH"
+    path: "/v1/rag/sessions/{session_id}"
+    body:
+      title: "{title}"
+      pinned: "{pinned}"
+
+  # 创建消息
+  rag_create_message:
+    method: "POST"
+    path: "/v1/rag/sessions/{session_id}/messages"
+    body:
+      role: "user"
+      content: "{content}"
+      citations: []
+      scope_mode: "{scope_mode}"
+      knowledge_base_id: "{knowledge_base_id}"
+      doc_ids: []
+      chat_mode: "pipeline"
+    response:
+      message_id_field: "message_id"
+
+  # 流式查询
+  rag_query_stream:
+    method: "POST"
+    path: "/v1/rag/query/stream"
+    body:
+      query: "{query}"
+      top_k: 8
+      rerank: true
+      stream: true
+      citation_mode: "inline"
+      knowledge_base_id: "{knowledge_base_id}"
+      session_id: "{session_id}"

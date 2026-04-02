@@ -44,7 +44,8 @@ class QATestConfig:
     """问答测试配置"""
     testset_path: str
     question_column: int = 2
-    expected_answer_column: Optional[int] = None
+    start_row: int = 2
+    end_row: Optional[int] = None
     knowledge_base_id: str = ""
     max_concurrent: int = 3
 
@@ -119,7 +120,8 @@ class Config:
         return QATestConfig(
             testset_path=data.get("testset_path", ""),
             question_column=data.get("question_column", 2),
-            expected_answer_column=data.get("expected_answer_column"),
+            start_row=data.get("start_row", 2),
+            end_row=data.get("end_row"),
             knowledge_base_id=data.get("knowledge_base_id", ""),
             max_concurrent=data.get("max_concurrent", 3),
         )

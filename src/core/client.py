@@ -10,20 +10,21 @@ from pathlib import Path
 class HttpClient:
     """HTTP 客户端 - 处理 API 调用"""
 
-    def __init__(self, base_url: str, headers: Optional[Dict[str, str]] = None):
+    def __init__(self, base_url: str, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0):
         """
         初始化 HTTP 客户端
 
         Args:
             base_url: 基础 URL
             headers: 默认请求头
+            timeout: 超时时间（秒），默认 30 秒
         """
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             headers=self.headers,
-            timeout=30.0,
+            timeout=timeout,
         )
 
     async def close(self):

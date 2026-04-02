@@ -79,13 +79,16 @@ class AutoTestAgent:
         command = command.strip().lower()
         intent = TestIntent(raw_command=command)
 
-        # 识别动作
-        if any(word in command for word in ["测试", "test", "运行", "run", "执行", "execute"]):
-            intent.action = "test"
+        # 识别动作 - 注意顺序：先检查特定动作，再检查通用动作
+        # 1. 先检查"问答"（因为"问答测试"应该是 QA 而不是完整测试）
+        if any(word in command for word in ["问答", "qa", "提问", "question", "回答", "answer"]):
+            intent.action = "qa"
+        # 2. 再检查"上传"
         elif any(word in command for word in ["上传", "upload", "导入", "import"]):
             intent.action = "upload"
-        elif any(word in command for word in ["问答", "qa", "提问", "question", "回答", "answer"]):
-            intent.action = "qa"
+        # 3. 最后检查"测试"（通用动作）
+        elif any(word in command for word in ["测试", "test", "运行", "run", "执行", "execute"]):
+            intent.action = "test"
         else:
             intent.action = "test"  # 默认为测试
 
@@ -242,17 +245,19 @@ class AutoTestAgent:
         if not qa_config:
             return None
 
-        # 从 Excel 加载问题
+        # 从 Excel 加载问题（使用问题文本作为标题）
         questions = await self.qa_driver.load_questions_from_excel(
             testset_path=qa_config.testset_path,
             question_column=qa_config.question_column,
+            start_row=qa_config.start_row,
+            end_row=qa_config.end_row,
         )
 
         if not questions:
             raise Exception(f"测试集中没有找到问题：{qa_config.testset_path}")
 
         # 执行批量问答
-        result = await self.qa_driver.batch_ask(
+        result = await self.qa_driver.run_batch_qa_tests(
             questions=questions,
             knowledge_base_id=qa_config.knowledge_base_id,
             max_concurrent=qa_config.max_concurrent,
@@ -294,7 +299,7 @@ class AutoTestAgent:
         self,
         scenario_name: str = None,
         testset_path: str = None,
-        questions: List[str] = None,
+        questions: List[tuple] = None,  # [(question, title), ...]
     ) -> BatchQAResult:
         """
         直接执行问答测试
@@ -302,7 +307,7 @@ class AutoTestAgent:
         Args:
             scenario_name: 场景名称（从配置加载）
             testset_path: 测试集路径（直接指定）
-            questions: 问题列表（直接指定）
+            questions: 问题列表（直接指定），每个元素为 (问题，标题) 元组
 
         Returns:
             BatchQAResult 问答结果
@@ -314,17 +319,21 @@ class AutoTestAgent:
                 questions = await self.qa_driver.load_questions_from_excel(
                     testset_path=qa_config.testset_path,
                     question_column=qa_config.question_column,
+                    title_column=1,
+                    start_row=qa_config.start_row,
+                    end_row=qa_config.end_row,
                 )
-                return await self.qa_driver.batch_ask(
+                return await self.qa_driver.run_batch_qa_tests(
                     questions=questions,
                     knowledge_base_id=qa_config.knowledge_base_id,
+                    max_concurrent=qa_config.max_concurrent,
                 )
 
         # 使用默认配置
         if questions:
-            return await self.qa_driver.batch_ask(questions)
+            return await self.qa_driver.run_batch_qa_tests(questions)
         elif testset_path:
             questions = await self.qa_driver.load_questions_from_excel(testset_path)
-            return await self.qa_driver.batch_ask(questions)
+            return await self.qa_driver.run_batch_qa_tests(questions)
         else:
             raise ValueError("需要指定 scenario_name、testset_path 或 questions")
