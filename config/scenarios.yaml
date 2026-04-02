@@ -15,10 +15,10 @@ scenarios:
       max_concurrent: 5  # 并发上传数量
 
     qa_test:
-      enabled: false  # 暂时不启用
+      enabled: true  # 启用问答测试
       testset_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\测试集\\测试集样例.xlsx"
       question_column: 2
-      knowledge_base_id: ""
+      knowledge_base_id: "ALL_KB"
       max_concurrent: 3
 
   demo:

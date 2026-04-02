@@ -3,6 +3,7 @@ AutoTest Agent - 自然语言驱动的测试执行引擎
 """
 
 import re
+import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -13,6 +14,9 @@ from ..core.auth import AuthManager
 from ..drivers.document_driver import DocumentDriver, BatchUploadResult
 from ..drivers.qa_driver import QADriver, BatchQAResult
 from ..reporters.report_generator import ReportGenerator
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -241,9 +245,16 @@ class AutoTestAgent:
         Returns:
             BatchQAResult 问答结果
         """
+        logger.info("=" * 60)
+        logger.info(f"开始执行问答测试场景：{scenario.name}")
+
         qa_config = scenario.qa_test
         if not qa_config:
+            logger.warning(f"场景 {scenario.name} 未配置 qa_test")
             return None
+
+        logger.info(f"测试集路径：{qa_config.testset_path}")
+        logger.info(f"问题列：{qa_config.question_column}, 起始行：{qa_config.start_row}")
 
         # 从 Excel 加载问题（使用问题文本作为标题）
         questions = await self.qa_driver.load_questions_from_excel(
@@ -255,6 +266,8 @@ class AutoTestAgent:
 
         if not questions:
             raise Exception(f"测试集中没有找到问题：{qa_config.testset_path}")
+
+        logger.info(f"加载问题数量：{len(questions)}")
 
         # 执行批量问答
         result = await self.qa_driver.run_batch_qa_tests(
