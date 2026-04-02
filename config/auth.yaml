@@ -1,0 +1,12 @@
+# 认证配置
+
+auth:
+  login_endpoint: "auth_login"
+
+  credentials:
+    username: "zhangwei"
+    password: "123456"
+
+  token:
+    storage: "memory"
+    refresh_threshold: 300  # token 过期前 300 秒刷新

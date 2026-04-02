@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -c \"from src.agents import AutoTestAgent; from src.core import load_config; print\\('框架导入成功！'\\)\")",
+      "Bash(python main.py --help)",
+      "Bash(python test_framework.py)",
+      "Bash(python main.py \"帮我测试文档上传\")",
+      "Bash(dir \"D:\\\\测试项目\\\\Sensepedia\\\\项目版本\\\\海关 POC\")",
+      "Bash(python -c \"import os; print\\(os.listdir\\('D:/测试项目/Sensepedia/项目版本/海关 POC'\\)\\)\")",
+      "Bash(python -c \"import os; path='D:/测试项目/Sensepedia'; print\\(os.listdir\\(path\\) if os.path.exists\\(path\\) else 'Path not exist'\\)\")",
+      "Bash(python -c \"import os; path='D:/测试项目/Sensepedia/项目版本'; print\\(os.listdir\\(path\\) if os.path.exists\\(path\\) else 'Path not exist'\\)\")",
+      "Bash(python -c \"import os; path='D:/测试项目/Sensepedia/项目版本/海关 POC'; print\\(os.listdir\\(path\\) if os.path.exists\\(path\\) else 'Path not exist'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import os; print\\([d for d in os.listdir\\(r'D:\\\\测试项目\\\\Sensepedia\\\\项目版本'\\)]\\)\")",
+      "Bash(python main.py --upload --scenario hk_customs)"
+    ]
+  }
+}

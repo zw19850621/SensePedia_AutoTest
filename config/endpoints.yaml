@@ -1,0 +1,52 @@
+# API 端点配置
+
+base_urls:
+  platform_api: "http://10.210.0.61:8022"
+
+endpoints:
+  # 认证登录
+  auth_login:
+    method: "POST"
+    path: "/v1/auth/login"
+    body:
+      username: "{username}"
+      password: "{password}"
+    response:
+      token_field: "token"
+
+  # 文档上传
+  document_upload:
+    method: "POST"
+    path: "/v1/knowledge/documents/upload"
+    content_type: "multipart/form-data"
+    fields:
+      - name: "file"
+        type: "binary"
+      - name: "doc_name"
+        type: "text"
+      - name: "language"
+        type: "text"
+        default: "zh-cn"
+      - name: "visibility"
+        type: "text"
+        default: "private"
+    response:
+      document_id_field: "document_id"
+      status_field: "status"
+
+  # 文档状态查询
+  document_status:
+    method: "GET"
+    path: "/v1/knowledge/documents/{document_id}"
+    response:
+      status_field: "status"
+      parser_status_field: "parser_status"
+
+  # 文档发布/解析
+  document_publish:
+    method: "POST"
+    path: "/v1/knowledge/documents/{document_id}/publish"
+    body: {}
+    response:
+      job_id_field: "job_id"
+      status_field: "status"

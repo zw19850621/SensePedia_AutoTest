@@ -1,0 +1,22 @@
+# 测试成功标准规则
+
+rules:
+  document_upload:
+    success_rate:
+      min: 0.95  # 95% 成功率
+
+    file_type_success:
+      pdf:
+        min: 0.90
+      docx:
+        min: 0.90
+      md:
+        min: 0.95
+      txt:
+        min: 0.95
+
+    publish_success_rate:
+      min: 0.90
+
+    poll_interval: 2  # 轮询间隔（秒）
+    poll_timeout: 300  # 超时时间（秒）

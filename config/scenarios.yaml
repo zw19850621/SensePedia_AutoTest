@@ -1,0 +1,39 @@
+# 测试场景配置
+
+scenarios:
+  hk_customs:
+    name: "香港海关知识库测试"
+    description: "海关 POC 全量测试"
+    enabled: true
+
+    document_upload:
+      enabled: true
+      base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步(1219)"
+      file_types: ["pdf", "docx", "md", "txt"]
+      language: "zh-cn"
+      visibility: "private"
+      max_concurrent: 5  # 并发上传数量
+
+    qa_test:
+      enabled: false  # 暂时不启用
+      testset_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\测试集\\测试集样例.xlsx"
+      question_column: 2
+      knowledge_base_id: ""
+      max_concurrent: 3
+
+  demo:
+    name: "演示测试场景"
+    description: "用于测试框架功能的演示场景"
+    enabled: false
+
+    document_upload:
+      enabled: true
+      base_path: "./data/documents"
+      file_types: ["pdf", "docx", "md", "txt"]
+      language: "zh-cn"
+      visibility: "private"
+
+    qa_test:
+      enabled: false
+      testset_path: "./data/testsets/test_questions.xlsx"
+      question_column: 2
