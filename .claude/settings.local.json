@@ -17,7 +17,15 @@
       "Bash(python main.py 知识库问答测试)",
       "Bash(python main.py --qa --scenario hk_customs)",
       "Bash(python -u main.py 知识库问答测试)",
-      "Bash(python -u main.py --qa --scenario hk_customs)"
+      "Bash(python -u main.py --qa --scenario hk_customs)",
+      "Bash(python -c \"import openpyxl; wb = openpyxl.load_workbook\\(r'D:\\\\测试项目\\\\Sensepedia\\\\项目版本\\\\海关 POC\\\\测试集\\\\测试集样例.xlsx'\\); ws = wb.active; print\\(f'总行数：{ws.max_row}'\\); [print\\(f'Row {i}: {ws.cell\\(i, 2\\).value}'\\) for i in range\\(2, ws.max_row + 1\\)]\")",
+      "Bash(python -c \"import os; files = [f for f in os.listdir\\(r'd:\\\\测试项目\\\\Sensepedia\\\\SensePedia_AutoTest\\\\reports\\\\hk_customs'\\) if f.endswith\\('.xlsx'\\)]; print\\('\\\\\\\\n'.join\\(files\\)\\)\")",
+      "Bash(python)",
+      "Bash(chcp 65001)",
+      "Bash(PYTHONUTF8=1 python main.py 知识库问答测试)",
+      "Bash(python -c \"import os; print\\(os.path.exists\\(r'D:\\\\测试项目\\\\Sensepedia\\\\项目版本\\\\海关 POC\\\\测试集\\\\测试集样例.xlsx'\\)\\)\")",
+      "Bash(dir \"D:\\\\测试项目\\\\Sensepedia\\\\项目版本\\\\海关 POC\\\\测试集\")",
+      "Bash(findstr .xlsx)"
     ]
   }
 }

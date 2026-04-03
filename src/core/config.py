@@ -44,6 +44,8 @@ class QATestConfig:
     """问答测试配置"""
     testset_path: str
     question_column: int = 2
+    id_column: int = 1
+    sheet_name: Optional[str] = None
     start_row: int = 2
     end_row: Optional[int] = None
     knowledge_base_id: str = ""
@@ -68,6 +70,7 @@ class Config:
     auth: AuthConfig = field(default_factory=AuthConfig)
     scenarios: dict = field(default_factory=dict)
     rules: dict = field(default_factory=dict)
+    report_output_dir: str = "./reports"  # 测试报告输出目录
 
     def get_endpoint(self, name: str) -> Optional[EndpointConfig]:
         """获取指定名称的端点配置"""
@@ -171,12 +174,8 @@ def load_config(config_dir: str = None) -> Config:
         with open(scenarios_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
             config.scenarios = data.get("scenarios", {})
-
-    # 加载规则配置
-    rules_path = config_dir / "rules.yaml"
-    if rules_path.exists():
-        with open(rules_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-            config.rules = data.get("rules", {})
+            # 加载全局配置
+            global_config = data.get("global", {})
+            config.report_output_dir = global_config.get("report_output_dir", "./reports")
 
     return config

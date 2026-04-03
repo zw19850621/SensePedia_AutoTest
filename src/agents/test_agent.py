@@ -52,7 +52,7 @@ class AutoTestAgent:
         """
         self.config = config or load_config()
         self.auth_manager = AuthManager(self.config)
-        self.report_generator = ReportGenerator()
+        self.report_generator = ReportGenerator.from_config(self.config)
         self._document_driver: Optional[DocumentDriver] = None
         self._qa_driver: Optional[QADriver] = None
 
@@ -203,8 +203,14 @@ class AutoTestAgent:
                 scenario_name=intent.scenario,
             )
 
+            # 5. 保存 Excel 结果（如果有 QA 测试）
+            if result.qa_result:
+                excel_path = self._save_qa_result_to_excel(result.qa_result, intent.scenario)
+                result.message = f"测试执行完成，报告已保存至：{result.report_path}，Excel 结果已保存至：{excel_path}"
+            else:
+                result.message = f"测试执行完成，报告已保存至：{result.report_path}"
+
             result.success = True
-            result.message = f"测试执行完成，报告已保存至：{result.report_path}"
 
         except Exception as e:
             result.success = False
@@ -254,12 +260,14 @@ class AutoTestAgent:
             return None
 
         logger.info(f"测试集路径：{qa_config.testset_path}")
-        logger.info(f"问题列：{qa_config.question_column}, 起始行：{qa_config.start_row}")
+        logger.info(f"工作表：{qa_config.sheet_name or '默认（第一个）'}, 问题列：{qa_config.question_column}, 起始行：{qa_config.start_row}")
 
         # 从 Excel 加载问题（使用问题文本作为标题）
         questions = await self.qa_driver.load_questions_from_excel(
             testset_path=qa_config.testset_path,
+            sheet_name=qa_config.sheet_name,
             question_column=qa_config.question_column,
+            id_column=qa_config.id_column or 1,  # 从第一列读取编号
             start_row=qa_config.start_row,
             end_row=qa_config.end_row,
         )
@@ -277,6 +285,31 @@ class AutoTestAgent:
         )
 
         return result
+
+    def _save_qa_result_to_excel(self, qa_result, scenario_name: str) -> str:
+        """
+        保存 QA 测试结果到 Excel 文件
+
+        Args:
+            qa_result: 批量问答结果
+            scenario_name: 场景名称
+
+        Returns:
+            保存的文件路径
+        """
+        # 使用与报告相同的输出目录
+        excel_dir = self.report_generator.output_dir / scenario_name
+        excel_dir.mkdir(parents=True, exist_ok=True)
+
+        # 使用与报告相同的时间戳
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        excel_filename = f"{timestamp}.xlsx"
+        excel_path = excel_dir / excel_filename
+
+        # 保存 Excel
+        self.qa_driver.save_results_to_excel(qa_result, str(excel_path))
+
+        return str(excel_path)
 
     async def upload_documents(
         self,
