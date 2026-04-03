@@ -174,45 +174,40 @@ class ReportGenerator:
             lines.append("## 请求详情")
             lines.append("")
             for i, r in enumerate(success_results[:20], 1):  # 最多显示 20 个
-                lines.append(f"### Q{i}: {r.question}")
+                lines.append(f"### Q{i} ###")
                 lines.append("")
                 lines.append(f"**响应时间**: {r.response_time:.2f} 秒")
                 lines.append("")
-                if r.answer:
-                    lines.append(f"**答案**: {r.answer[:500]}{'...' if len(r.answer) > 500 else ''}")
+                lines.append("**提问请求**: ")
+
+                # 从 request_details 中找到 streaming_query 请求
+                streaming_req = None
+                for req in r.request_details:
+                    if req.get('api') == 'streaming_query':
+                        streaming_req = req
+                        break
+
+                if streaming_req:
+                    # 显示请求 URL
+                    base_url = "http://10.210.0.61:8022"
+                    path = streaming_req.get('path', '/v1/rag/query/stream')
+                    lines.append(f"{streaming_req.get('method', 'POST')} {base_url}{path}")
+                    lines.append("")
+                    lines.append("**请求体:**")
+                    lines.append(json.dumps(streaming_req.get('request_body', {}), ensure_ascii=False, indent=2))
+                    lines.append("")
+                    lines.append("**响应体:**")
+                    # 从 response_data 中提取原始流式响应（raw 字段）
+                    response_data = streaming_req.get('response_data', {})
+                    raw_response = response_data.get('raw', '')
+                    if raw_response:
+                        lines.append(raw_response)
+                    else:
+                        answer_text = r.answer if r.answer else "(无答案)"
+                        lines.append(answer_text)
                 else:
-                    lines.append("**答案**: (无答案)")
+                    lines.append("(未找到请求详情)")
 
-                # 显示请求详情
-                if r.request_details:
-                    lines.append("")
-                    lines.append("**接口请求与响应:**")
-                    for req in r.request_details:
-                        lines.append("")
-                        lines.append(f"#### {req.get('api', 'Unknown API')} - {req.get('method', 'N/A')} {req.get('path', 'N/A')}")
-                        lines.append("")
-                        lines.append(f"- 状态码：{req.get('status_code', 'N/A')}")
-                        lines.append(f"- 耗时：{req.get('elapsed', 'N/A')}")
-                        lines.append("")
-                        lines.append("**请求体:**")
-                        lines.append("```json")
-                        lines.append(json.dumps(req.get('request_body', {}), ensure_ascii=False, indent=2))
-                        lines.append("```")
-                        lines.append("")
-                        lines.append("**响应体:**")
-                        lines.append("```json")
-                        lines.append(json.dumps(req.get('response_data', {}), ensure_ascii=False, indent=2)[:2000] + "...")
-                        lines.append("```")
-
-                # 引用来源
-                if r.citations:
-                    lines.append("")
-                    lines.append(f"**引用来源**: {len(r.citations)} 个")
-                    for j, cite in enumerate(r.citations[:3], 1):
-                        doc_name = cite.get("doc_id", "Unknown")[:50]
-                        lines.append(f"  {j}. {doc_name}...")
-                    if len(r.citations) > 3:
-                        lines.append(f"  *... 还有 {len(r.citations) - 3} 个*")
                 lines.append("")
                 lines.append("---")
                 lines.append("")

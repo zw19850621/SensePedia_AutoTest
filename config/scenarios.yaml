@@ -8,20 +8,22 @@ scenarios:
 
     document_upload:
       enabled: true
-      base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步(1219)"
+      base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关 POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步 (1219)"
       file_types: ["pdf", "docx", "md", "txt"]
       language: "zh-cn"
       visibility: "private"
       max_concurrent: 5  # 并发上传数量
 
     qa_test:
-      enabled: true  
+      enabled: true
       testset_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\测试集\\测试集样例.xlsx"
-      question_column: 2    # 问题所在列（1-based）
-      start_row: 2          # 起始行，跳过表头
-      end_row: null         # 结束行（null 表示到最后）
+      sheet_name: null        # Excel 工作表名称（null 表示使用默认第一个工作表）
+      id_column: 1            # 编号所在列（1-based）
+      question_column: 2      # 问题所在列（1-based）
+      start_row: 2            # 起始行，跳过表头
+      end_row: null           # 结束行（null 表示到最后）
       knowledge_base_id: "ALL_KB"
-      max_concurrent: 5     # 并发执行数量
+      max_concurrent: 10      # 并发执行数量
 
   demo:
     name: "演示测试场景"
@@ -38,4 +40,5 @@ scenarios:
     qa_test:
       enabled: false
       testset_path: "./data/testsets/test_questions.xlsx"
+      sheet_name: null        # Excel 工作表名称（null 表示使用默认第一个工作表）
       question_column: 2

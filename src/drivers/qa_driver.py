@@ -53,6 +53,7 @@ class QAResult:
     session_id: Optional[str] = None
     message_id: Optional[str] = None
     request_details: List[dict] = field(default_factory=list)  # 记录每个接口的请求和响应
+    question_id: Optional[str] = None  # 问题编号（从测试集第一列读取）
 
 
 @dataclass
@@ -119,7 +120,6 @@ class QADriver:
         """
         self.config = config
         self.auth_manager = auth_manager
-        self._current_result: Optional[QAResult] = None  # 当前测试的结果对象
 
     def _get_endpoint(self, name: str) -> Optional[EndpointConfig]:
         """获取指定名称的端点配置"""
@@ -143,25 +143,35 @@ class QADriver:
                     body[key] = value
         return body
 
-    def _add_request_detail(self, method_name: str, method: str, path: str, request_body: dict, response_data: Any, elapsed: float, status_code: int):
-        """添加请求详情到当前结果"""
-        if self._current_result is not None:
-            self._current_result.request_details.append({
-                "api": method_name,
-                "method": method,
-                "path": path,
-                "request_body": request_body,
-                "response_data": response_data if isinstance(response_data, (dict, list)) else {"raw": str(response_data)},
-                "status_code": status_code,
-                "elapsed": f"{elapsed:.3f}s",
-            })
+    def _add_request_detail(
+        self,
+        result: QAResult,
+        method_name: str,
+        method: str,
+        path: str,
+        request_body: dict,
+        response_data: Any,
+        elapsed: float,
+        status_code: int,
+    ):
+        """添加请求详情到指定结果"""
+        result.request_details.append({
+            "api": method_name,
+            "method": method,
+            "path": path,
+            "request_body": request_body,
+            "response_data": response_data if isinstance(response_data, (dict, list)) else {"raw": str(response_data)},
+            "status_code": status_code,
+            "elapsed": f"{elapsed:.3f}s",
+        })
 
-    async def create_session(self, title: str = "New Chat") -> SessionInfo:
+    async def create_session(self, title: str = "New Chat", result: QAResult = None) -> SessionInfo:
         """
         创建新会话
 
         Args:
             title: 会话标题
+            result: 用于记录请求详情的结果对象
 
         Returns:
             SessionInfo 会话信息
@@ -191,7 +201,7 @@ class QADriver:
             elapsed = time.time() - start_time
 
             # 记录请求详情
-            self._add_request_detail("create_session", "POST", "/v1/rag/sessions", body, data, elapsed, response.status_code)
+            self._add_request_detail(result, "create_session", "POST", "/v1/rag/sessions", body, data, elapsed, response.status_code)
 
             return SessionInfo(
                 session_id=data["session_id"],
@@ -205,12 +215,13 @@ class QADriver:
             if client:
                 await client.close()
 
-    async def get_session(self, session_id: str) -> Dict[str, Any]:
+    async def get_session(self, session_id: str, result: QAResult = None) -> Dict[str, Any]:
         """
         获取会话信息
 
         Args:
             session_id: 会话 ID
+            result: 用于记录请求详情的结果对象
 
         Returns:
             包含 session 和 messages 的字典
@@ -239,7 +250,7 @@ class QADriver:
             elapsed = time.time() - start_time
 
             # 记录请求详情
-            self._add_request_detail("get_session", "GET", path, {}, data, elapsed, response.status_code)
+            self._add_request_detail(result, "get_session", "GET", path, {}, data, elapsed, response.status_code)
 
             return data
 
@@ -247,13 +258,14 @@ class QADriver:
             if client:
                 await client.close()
 
-    async def update_session_title(self, session_id: str, title: str) -> SessionInfo:
+    async def update_session_title(self, session_id: str, title: str, result: QAResult = None) -> SessionInfo:
         """
         更新会话标题
 
         Args:
             session_id: 会话 ID
             title: 新标题（会自动截取到 50 字符，避免数据库报错）
+            result: 用于记录请求详情的结果对象
 
         Returns:
             SessionInfo 更新后的会话信息
@@ -289,7 +301,7 @@ class QADriver:
             elapsed = time.time() - start_time
 
             # 记录请求详情
-            self._add_request_detail("update_session_title", "PATCH", path, body, data, elapsed, response.status_code)
+            self._add_request_detail(result, "update_session_title", "PATCH", path, body, data, elapsed, response.status_code)
 
             session_info = SessionInfo(
                 session_id=data["session_id"],
@@ -310,6 +322,7 @@ class QADriver:
         content: str,
         knowledge_base_id: str = "ALL_KB",
         scope_mode: str = "all",
+        result: QAResult = None,
     ) -> MessageInfo:
         """
         创建提问消息
@@ -319,6 +332,7 @@ class QADriver:
             content: 问题内容
             knowledge_base_id: 知识库 ID
             scope_mode: 范围模式
+            result: 用于记录请求详情的结果对象
 
         Returns:
             MessageInfo 消息信息
@@ -355,7 +369,7 @@ class QADriver:
             elapsed = time.time() - start_time
 
             # 记录请求详情
-            self._add_request_detail("create_message", "POST", path, body, data, elapsed, response.status_code)
+            self._add_request_detail(result, "create_message", "POST", path, body, data, elapsed, response.status_code)
 
             message_info = MessageInfo(
                 message_id=data["message_id"],
@@ -377,6 +391,7 @@ class QADriver:
         citations: List[dict],
         knowledge_base_id: str = "ALL_KB",
         scope_mode: str = "all",
+        result: QAResult = None,
     ) -> MessageInfo:
         """
         步骤 6：创建助手回复消息（更新提问）
@@ -387,6 +402,7 @@ class QADriver:
             citations: 步骤 5 流式响应中 event=done 返回的 citations
             knowledge_base_id: 知识库 ID
             scope_mode: 范围模式
+            result: 用于记录请求详情的结果对象
 
         Returns:
             MessageInfo 消息信息
@@ -429,7 +445,7 @@ class QADriver:
             elapsed = time.time() - start_time
 
             # 记录请求详情
-            self._add_request_detail("create_assistant_message", "POST", path, body, data, elapsed, response.status_code)
+            self._add_request_detail(result, "create_assistant_message", "POST", path, body, data, elapsed, response.status_code)
 
             message_info = MessageInfo(
                 message_id=data["message_id"],
@@ -480,7 +496,7 @@ class QADriver:
                     logger.debug(f"解析 data 失败：{json_str[:100]}... 错误：{e}")
 
         answer = "".join(answer_parts)
-        logger.info(f"解析完成：共 {len(lines)} 行，其中 {token_count} 行 token 事件，拼接后答案长度：{len(answer)}")
+        #logger.info(f"解析完成：共 {len(lines)} 行，其中 {token_count} 行 token 事件，拼接后答案长度：{len(answer)}")
         return answer
 
     async def streaming_query(
@@ -544,7 +560,7 @@ class QADriver:
                 result.success = False
                 result.error = f"请求失败：{response.status_code} - {response.text}"
                 elapsed = time.time() - start_time
-                self._add_request_detail("streaming_query", "POST", endpoint.path, body, {"error": response.text}, elapsed, response.status_code)
+                self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"error": response.text}, elapsed, response.status_code)
                 return result
 
             # 收集流式响应行
@@ -583,9 +599,10 @@ class QADriver:
             result.citations = citations
             result.metadata = metadata
 
-            # 记录请求详情
+            # 记录请求详情 - 保存原始流式响应
             elapsed = time.time() - start_time
-            self._add_request_detail("streaming_query", "POST", endpoint.path, body, {"answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+            raw_response = "\n".join(lines)  # 原始 SSE 格式响应
+            self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
 
             result.success = True
             return result
@@ -605,6 +622,7 @@ class QADriver:
         question: str,
         knowledge_base_id: str = "ALL_KB",
         session_title: str = None,
+        question_id: str = None,
     ) -> QAResult:
         """
         执行单次完整的问答测试流程
@@ -613,28 +631,28 @@ class QADriver:
             question: 问题
             knowledge_base_id: 知识库 ID
             session_title: 会话标题（从测试集读取）
+            question_id: 问题编号（从测试集第一列读取）
 
         Returns:
             QAResult 问答结果
         """
-        result = QAResult(question=question)
-        self._current_result = result  # 设置当前结果对象，用于记录请求详情
+        result = QAResult(question=question, question_id=question_id)
 
         try:
             # 1. 创建新会话
-            session_info = await self.create_session("New Chat")
+            session_info = await self.create_session("New Chat", result)
             session_id = session_info.session_id
             result.session_id = session_id
 
             # 2. 获取会话详情（验证会话创建成功）
-            await self.get_session(session_id)
+            await self.get_session(session_id, result)
 
             # 3. 更新会话标题（如果提供了标题）
             if session_title:
-                await self.update_session_title(session_id, session_title)
+                await self.update_session_title(session_id, session_title, result)
 
             # 4. 创建提问消息
-            message_info = await self.create_message(session_id, question, knowledge_base_id)
+            message_info = await self.create_message(session_id, question, knowledge_base_id, result=result)
             result.message_id = message_info.message_id
 
             # 5. 流式查询获取答案
@@ -645,6 +663,8 @@ class QADriver:
             result.citations = qa_result.citations
             result.success = qa_result.success
             result.error = qa_result.error
+            # 合并 streaming_query 的请求详情
+            result.request_details.extend(qa_result.request_details)
 
             # 6. 创建助手回复消息（更新提问）
             if qa_result.answer and qa_result.citations is not None:
@@ -653,6 +673,7 @@ class QADriver:
                     answer=qa_result.answer,
                     citations=qa_result.citations,
                     knowledge_base_id=knowledge_base_id,
+                    result=result,
                 )
 
             return result
@@ -661,12 +682,10 @@ class QADriver:
             result.success = False
             result.error = str(e)
             return result
-        finally:
-            self._current_result = None  # 清除当前结果对象
 
     async def run_batch_qa_tests(
         self,
-        questions: List[tuple],  # [(question, title), ...]
+        questions: List[tuple],  # [(question, title, question_id), ...]
         knowledge_base_id: str = "ALL_KB",
         max_concurrent: int = 3,
     ) -> BatchQAResult:
@@ -674,7 +693,7 @@ class QADriver:
         批量执行问答测试
 
         Args:
-            questions: 问题列表，每个元素为 (问题，标题) 元组
+            questions: 问题列表，每个元素为 (问题，标题，编号) 元组
             knowledge_base_id: 知识库 ID
             max_concurrent: 最大并发数
 
@@ -697,12 +716,17 @@ class QADriver:
 
         async def run_test_with_semaphore(idx: int, q: tuple) -> QAResult:
             async with semaphore:
-                question, title = q
+                if len(q) >= 3:
+                    question, title, question_id = q
+                else:
+                    question, title = q
+                    question_id = None
                 logger.info(f"[{idx + 1}/{result.total}] 开始处理：{question[:50]}...")
                 qa_result = await self.run_single_qa_test(
                     question=question,
                     knowledge_base_id=knowledge_base_id,
                     session_title=title,
+                    question_id=question_id,
                 )
                 status = "成功" if qa_result.success else "失败"
                 logger.info(f"[{idx + 1}/{result.total}] 完成：{status}, 耗时：{qa_result.response_time:.2f}s")
@@ -730,6 +754,8 @@ class QADriver:
         testset_path: str,
         question_column: int = 2,
         title_column: int = None,  # 可选，用于读取标题
+        id_column: int = 1,  # 编号列（1-based）
+        sheet_name: str = None,  # Excel 工作表名称（None 表示使用默认第一个工作表）
         start_row: int = 2,
         end_row: int = None,
     ) -> List[tuple]:
@@ -740,11 +766,13 @@ class QADriver:
             testset_path: Excel 文件路径
             question_column: 问题所在列（1-based）
             title_column: 标题所在列（1-based），None 则使用问题作为标题
+            id_column: 编号所在列（1-based），默认第 1 列
+            sheet_name: Excel 工作表名称（None 表示使用默认第一个工作表）
             start_row: 起始行（1-based），跳过表头
             end_row: 结束行（None 表示到最后）
 
         Returns:
-            问题列表 [(question, title), ...]
+            问题列表 [(question, title, question_id), ...]
         """
         try:
             import openpyxl
@@ -752,16 +780,23 @@ class QADriver:
             raise ImportError("需要安装 openpyxl: pip install openpyxl")
 
         wb = openpyxl.load_workbook(testset_path, read_only=True)
-        ws = wb.active
+
+        # 根据 sheet_name 获取工作表
+        if sheet_name:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.active
 
         questions = []
         end_row_param = end_row if end_row else ws.max_row
 
-        for row in ws.iter_rows(min_row=start_row, max_row=end_row_param, min_col=1, max_col=max(question_column, title_column or 1)):
+        for row in ws.iter_rows(min_row=start_row, max_row=end_row_param, min_col=1, max_col=max(question_column, title_column or 1, id_column)):
             question_cell = row[question_column - 1] if question_column <= len(row) else None
             title_cell = row[title_column - 1] if title_column and title_column <= len(row) else None
+            id_cell = row[id_column - 1] if id_column <= len(row) else None
 
             question = str(question_cell.value).strip() if question_cell and question_cell.value else None
+            question_id = str(id_cell.value).strip() if id_cell and id_cell.value else None
 
             # 如果没有指定 title_column，使用问题作为标题
             if title_column and title_cell and title_cell.value:
@@ -770,7 +805,7 @@ class QADriver:
                 title = question
 
             if question:
-                questions.append((question, title))
+                questions.append((question, title, question_id))
 
         wb.close()
         return questions
@@ -794,6 +829,7 @@ class QADriver:
         """
         try:
             import openpyxl
+            from openpyxl.styles import Font, Alignment, PatternFill
         except ImportError:
             raise ImportError("需要安装 openpyxl: pip install openpyxl")
 
@@ -806,34 +842,84 @@ class QADriver:
         ws = wb.active
         ws.title = "问答测试结果"
 
-        # 设置表头（第 1 行）：第 1 列"提问"，第 2 列"生成回答"
-        ws.cell(row=1, column=1, value="提问")
-        ws.cell(row=1, column=2, value="生成回答")
+        # 定义样式
+        header_font = Font(name='Microsoft YaHei Light', size=8)
+        cell_font = Font(name='Microsoft YaHei Light', size=8)
+        cell_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+
+        # 设置表头（第 1 行）：编号 | 提问 | 生成回答 | 响应时间 | 引用文档
+        headers = ["编号", "提问", "生成回答", "响应时间", "引用文档"]
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.alignment = cell_alignment
 
         # 填充数据（从第 2 行开始）
         for row_idx, result in enumerate(results.results, 2):
-            ws.cell(row=row_idx, column=1, value=result.question)
-            ws.cell(row=row_idx, column=2, value=result.answer or "")
+            # 第 1 列：编号
+            id_cell = ws.cell(row=row_idx, column=1, value=result.question_id or "")
+            id_cell.font = cell_font
+            id_cell.alignment = cell_alignment
 
-        # 添加统计信息
-        summary_row = len(results.results) + 3
-        ws.cell(row=summary_row, column=1, value="统计信息")
-        ws.cell(row=summary_row + 1, column=1, value="总题数")
-        ws.cell(row=summary_row + 1, column=2, value=results.total)
-        ws.cell(row=summary_row + 2, column=1, value="成功数")
-        ws.cell(row=summary_row + 2, column=2, value=results.success)
-        ws.cell(row=summary_row + 3, column=1, value="失败数")
-        ws.cell(row=summary_row + 3, column=2, value=results.failed)
-        ws.cell(row=summary_row + 4, column=1, value="成功率")
-        ws.cell(row=summary_row + 4, column=2, value=f"{results.success_rate:.2%}")
-        ws.cell(row=summary_row + 5, column=1, value="平均响应时间 (s)")
-        ws.cell(row=summary_row + 5, column=2, value=round(results.avg_response_time, 3))
-        ws.cell(row=summary_row + 6, column=1, value="P95 响应时间 (s)")
-        ws.cell(row=summary_row + 6, column=2, value=round(results.p95_response_time, 3))
-        ws.cell(row=summary_row + 7, column=1, value="总耗时 (s)")
-        ws.cell(row=summary_row + 7, column=2, value=round(results.duration, 3))
+            # 第 2 列：提问
+            question_cell = ws.cell(row=row_idx, column=2, value=result.question)
+            question_cell.font = cell_font
+            question_cell.alignment = cell_alignment
 
-        # 保存文件
+            # 第 3 列：生成回答
+            answer_cell = ws.cell(row=row_idx, column=3, value=result.answer or "")
+            answer_cell.font = cell_font
+            answer_cell.alignment = cell_alignment
+
+            # 第 4 列：响应时间
+            time_cell = ws.cell(row=row_idx, column=4, value=f"{result.response_time:.2f} 秒" if result.response_time else "")
+            time_cell.font = cell_font
+            time_cell.alignment = cell_alignment
+
+            # 第 5 列：引用文档（从 citations 中提取）
+            citations_text = ""
+            if result.citations:
+                citation_ids = []
+                for cite in result.citations:
+                    if isinstance(cite, dict):
+                        # 使用 doc_id 作为引用文档 ID
+                        doc_id = cite.get('doc_id', '')
+                        ref_id = cite.get('ref_id', '')
+                        if doc_id:
+                            # 格式：ref_1:doc_xxx
+                            citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
+                    elif isinstance(cite, str):
+                        citation_ids.append(cite)
+                citations_text = "\n".join(citation_ids)
+
+            # 如果 citations_text 为空，尝试从 metadata 中获取
+            if not citations_text and result.metadata:
+                metadata_citations = result.metadata.get('citations', [])
+                if metadata_citations:
+                    citation_ids = []
+                    for cite in metadata_citations:
+                        if isinstance(cite, dict):
+                            doc_id = cite.get('doc_id', '')
+                            ref_id = cite.get('ref_id', '')
+                            if doc_id:
+                                citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
+                        elif isinstance(cite, str):
+                            citation_ids.append(cite)
+                    citations_text = "\n".join(citation_ids)
+
+            cite_cell = ws.cell(row=row_idx, column=5, value=citations_text)
+            cite_cell.font = cell_font
+            cite_cell.alignment = cell_alignment
+
+        # 调整列宽
+        ws.column_dimensions['A'].width = 10  # 编号
+        ws.column_dimensions['B'].width = 40  # 提问
+        ws.column_dimensions['C'].width = 80  # 生成回答
+        ws.column_dimensions['D'].width = 15  # 响应时间
+        ws.column_dimensions['E'].width = 60  # 引用文档
+
+        # 保存文件（处理中文路径）
+        output_path = str(output_path)
         wb.save(output_path)
         wb.close()
 

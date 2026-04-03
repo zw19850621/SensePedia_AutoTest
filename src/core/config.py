@@ -44,6 +44,8 @@ class QATestConfig:
     """问答测试配置"""
     testset_path: str
     question_column: int = 2
+    id_column: int = 1
+    sheet_name: Optional[str] = None
     start_row: int = 2
     end_row: Optional[int] = None
     knowledge_base_id: str = ""
