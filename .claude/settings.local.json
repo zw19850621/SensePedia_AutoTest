@@ -13,7 +13,10 @@
       "Bash(python -c \"import os; path='D:/测试项目/Sensepedia/项目版本/海关 POC'; print\\(os.listdir\\(path\\) if os.path.exists\\(path\\) else 'Path not exist'\\)\")",
       "Bash(python -c ':*)",
       "Bash(python -c \"import os; print\\([d for d in os.listdir\\(r'D:\\\\测试项目\\\\Sensepedia\\\\项目版本'\\)]\\)\")",
-      "Bash(python main.py --upload --scenario hk_customs)"
+      "Bash(python main.py --upload --scenario hk_customs)",
+      "Bash(python main.py 知识库问答测试)",
+      "Bash(python main.py --qa --scenario hk_customs)",
+      "Bash(python -u main.py 知识库问答测试)"
     ]
   }
 }
