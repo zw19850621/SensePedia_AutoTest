@@ -52,6 +52,7 @@ class QAResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
     session_id: Optional[str] = None
     message_id: Optional[str] = None
+    request_details: List[dict] = field(default_factory=list)  # 记录每个接口的请求和响应
 
 
 @dataclass
@@ -118,6 +119,7 @@ class QADriver:
         """
         self.config = config
         self.auth_manager = auth_manager
+        self._current_result: Optional[QAResult] = None  # 当前测试的结果对象
 
     def _get_endpoint(self, name: str) -> Optional[EndpointConfig]:
         """获取指定名称的端点配置"""
@@ -141,6 +143,19 @@ class QADriver:
                     body[key] = value
         return body
 
+    def _add_request_detail(self, method_name: str, method: str, path: str, request_body: dict, response_data: Any, elapsed: float, status_code: int):
+        """添加请求详情到当前结果"""
+        if self._current_result is not None:
+            self._current_result.request_details.append({
+                "api": method_name,
+                "method": method,
+                "path": path,
+                "request_body": request_body,
+                "response_data": response_data if isinstance(response_data, (dict, list)) else {"raw": str(response_data)},
+                "status_code": status_code,
+                "elapsed": f"{elapsed:.3f}s",
+            })
+
     async def create_session(self, title: str = "New Chat") -> SessionInfo:
         """
         创建新会话
@@ -151,11 +166,8 @@ class QADriver:
         Returns:
             SessionInfo 会话信息
         """
-        logger.info("=" * 60)
-        logger.info("【步骤 1】创建会话")
-        
-
         client = None
+        start_time = time.time()
         try:
             auth_header = await self.auth_manager.get_auth_header()
             endpoint = self._get_endpoint("rag_create_session")
@@ -164,9 +176,6 @@ class QADriver:
 
             client = HttpClient(base_url=self.config.get_base_url(endpoint.base))
             body = self._build_body(endpoint, title=title)
-            logger.info(f"请求 URL: {client.base_url}{endpoint.path}")
-            #logger.info(f"请求方法：{endpoint.method}")
-            logger.info(f"请求 Body: {json.dumps(body, ensure_ascii=False)}")
 
             response = await client.request(
                 method=endpoint.method,
@@ -175,24 +184,22 @@ class QADriver:
                 json=body,
             )
 
-            #logger.info(f"响应状态码：{response.status_code}")
-
             if response.status_code not in [200, 201]:
-                logger.error(f"响应内容：{response.text}")
                 raise Exception(f"创建会话失败：{response.status_code} - {response.text}")
 
             data = response.json()
-            logger.info(f"响应数据：{json.dumps(data, ensure_ascii=False)}")
+            elapsed = time.time() - start_time
 
-            session_info = SessionInfo(
+            # 记录请求详情
+            self._add_request_detail("create_session", "POST", "/v1/rag/sessions", body, data, elapsed, response.status_code)
+
+            return SessionInfo(
                 session_id=data["session_id"],
                 title=data["title"],
                 pinned=data.get("pinned", False),
                 created_at=data.get("created_at"),
                 updated_at=data.get("updated_at"),
             )
-            #logger.info(f"创建成功：session_id={session_info.session_id}")
-            return session_info
 
         finally:
             if client:
@@ -208,11 +215,8 @@ class QADriver:
         Returns:
             包含 session 和 messages 的字典
         """
-        logger.info("=" * 60)
-        logger.info("【步骤 2】获取会话详情")
-        #logger.info(f"请求参数：session_id={session_id}")
-
         client = None
+        start_time = time.time()
         try:
             auth_header = await self.auth_manager.get_auth_header()
             endpoint = self._get_endpoint("rag_get_session")
@@ -221,8 +225,6 @@ class QADriver:
 
             client = HttpClient(base_url=self.config.get_base_url(endpoint.base))
             path = self._format_path(endpoint.path, session_id=session_id)
-            logger.info(f"请求 URL: {client.base_url}{path}")
-            #logger.info(f"请求方法：{endpoint.method}")
 
             response = await client.request(
                 method=endpoint.method,
@@ -230,14 +232,15 @@ class QADriver:
                 headers=auth_header,
             )
 
-            #logger.info(f"响应状态码：{response.status_code}")
-
             if response.status_code != 200:
-                logger.error(f"响应内容：{response.text}")
                 raise Exception(f"获取会话失败：{response.status_code} - {response.text}")
 
             data = response.json()
-            logger.info(f"响应数据：{json.dumps(data, ensure_ascii=False)}")
+            elapsed = time.time() - start_time
+
+            # 记录请求详情
+            self._add_request_detail("get_session", "GET", path, {}, data, elapsed, response.status_code)
+
             return data
 
         finally:
@@ -258,11 +261,7 @@ class QADriver:
         # 截取 title 到 50 字符（避免数据库字段过长）
         truncated_title = title[:50] if len(title) > 50 else title
 
-        logger.info("=" * 60)
-        logger.info("【步骤 3】更新会话标题")
-        logger.info(f"原始 title 长度：{len(title)}, 截取后：{len(truncated_title)}")
-        logger.info(f"title (前 100 字符): {truncated_title[:100]}...")
-
+        start_time = time.time()
         client = None
         try:
             auth_header = await self.auth_manager.get_auth_header()
@@ -275,10 +274,6 @@ class QADriver:
             # 只设置 title 字段，不设置 pinned
             body = {"title": truncated_title}
 
-            logger.info(f"请求 URL: {client.base_url}{path}")
-            #logger.info(f"请求方法：{endpoint.method}")
-            logger.info(f"请求 Body: {json.dumps(body, ensure_ascii=False)}")
-
             response = await client.request(
                 method=endpoint.method,
                 path=path,
@@ -286,14 +281,15 @@ class QADriver:
                 json=body,
             )
 
-            #logger.info(f"响应状态码：{response.status_code}")
-
             if response.status_code != 200:
                 logger.error(f"响应内容：{response.text}")
                 raise Exception(f"更新会话失败：{response.status_code} - {response.text}")
 
             data = response.json()
-            logger.info(f"响应数据：{json.dumps(data, ensure_ascii=False)}")
+            elapsed = time.time() - start_time
+
+            # 记录请求详情
+            self._add_request_detail("update_session_title", "PATCH", path, body, data, elapsed, response.status_code)
 
             session_info = SessionInfo(
                 session_id=data["session_id"],
@@ -302,7 +298,6 @@ class QADriver:
                 created_at=data.get("created_at"),
                 updated_at=data.get("updated_at"),
             )
-            #logger.info(f"更新成功：title={session_info.title[:50]}...")
             return session_info
 
         finally:
@@ -328,11 +323,7 @@ class QADriver:
         Returns:
             MessageInfo 消息信息
         """
-        logger.info("=" * 60)
-        logger.info("【步骤 4】创建提问消息")
-        #logger.info(f"请求参数：session_id={session_id}")
-        
-
+        start_time = time.time()
         client = None
         try:
             auth_header = await self.auth_manager.get_auth_header()
@@ -349,10 +340,6 @@ class QADriver:
                 scope_mode=scope_mode,
             )
 
-            logger.info(f"请求 URL: {client.base_url}{path}")
-            #logger.info(f"请求方法：{endpoint.method}")
-            logger.info(f"请求 Body: {json.dumps(body, ensure_ascii=False)}")
-
             response = await client.request(
                 method=endpoint.method,
                 path=path,
@@ -360,14 +347,15 @@ class QADriver:
                 json=body,
             )
 
-            #logger.info(f"响应状态码：{response.status_code}")
-
             if response.status_code != 201:
                 logger.error(f"响应内容：{response.text}")
                 raise Exception(f"创建消息失败：{response.status_code} - {response.text}")
 
             data = response.json()
-            logger.info(f"响应数据：{json.dumps(data, ensure_ascii=False)}")
+            elapsed = time.time() - start_time
+
+            # 记录请求详情
+            self._add_request_detail("create_message", "POST", path, body, data, elapsed, response.status_code)
 
             message_info = MessageInfo(
                 message_id=data["message_id"],
@@ -376,7 +364,6 @@ class QADriver:
                 content=data["content"],
                 created_at=data.get("created_at"),
             )
-            #logger.info(f"创建成功：message_id={message_info.message_id}")
             return message_info
 
         finally:
@@ -404,12 +391,7 @@ class QADriver:
         Returns:
             MessageInfo 消息信息
         """
-        logger.info("=" * 60)
-        logger.info("【步骤 6】创建助手回复消息")
-        logger.info(f"请求参数：session_id={session_id}")
-        logger.info(f"答案长度：{len(answer)}")
-        logger.info(f"citations 数量：{len(citations)}")
-
+        start_time = time.time()
         client = None
         try:
             auth_header = await self.auth_manager.get_auth_header()
@@ -432,10 +414,6 @@ class QADriver:
                 "chat_mode": "pipeline",
             }
 
-            logger.info(f"请求 URL: {client.base_url}{path}")
-            logger.info(f"请求方法：{endpoint.method}")
-            logger.info(f"请求 Body: {json.dumps(body, ensure_ascii=False, indent=2)}")
-
             response = await client.request(
                 method=endpoint.method,
                 path=path,
@@ -443,14 +421,15 @@ class QADriver:
                 json=body,
             )
 
-            logger.info(f"响应状态码：{response.status_code}")
-
             if response.status_code != 201:
                 logger.error(f"响应内容：{response.text}")
                 raise Exception(f"创建助手消息失败：{response.status_code} - {response.text}")
 
             data = response.json()
-            logger.info(f"响应数据：{json.dumps(data, ensure_ascii=False)}")
+            elapsed = time.time() - start_time
+
+            # 记录请求详情
+            self._add_request_detail("create_assistant_message", "POST", path, body, data, elapsed, response.status_code)
 
             message_info = MessageInfo(
                 message_id=data["message_id"],
@@ -459,7 +438,6 @@ class QADriver:
                 content=data["content"],
                 created_at=data.get("created_at"),
             )
-            logger.info(f"创建成功：message_id={message_info.message_id}")
             return message_info
 
         finally:
@@ -528,10 +506,6 @@ class QADriver:
         Returns:
             QAResult 问答结果
         """
-        logger.info("=" * 60)
-        logger.info("【步骤 5】流式查询")
-        logger.info(f"请求参数：session_id={session_id}")
-        logger.info(f"问题 (前 50 字符): {query[:50]}...")
         result = QAResult(question=query, session_id=session_id)
         client = None
 
@@ -556,10 +530,6 @@ class QADriver:
                 citation_mode=citation_mode,
             )
 
-            logger.info(f"请求 URL: {client.base_url}{endpoint.path}")
-            logger.info(f"请求方法：{endpoint.method}")
-            logger.info(f"请求 Body: {json.dumps(body, ensure_ascii=False)}")
-
             start_time = time.time()
 
             response = await client.request(
@@ -569,31 +539,25 @@ class QADriver:
                 json=body,
             )
 
-            logger.info(f"响应状态码：{response.status_code}")
-
             if response.status_code != 200:
                 logger.error(f"响应内容：{response.text}")
                 result.success = False
                 result.error = f"请求失败：{response.status_code} - {response.text}"
+                elapsed = time.time() - start_time
+                self._add_request_detail("streaming_query", "POST", endpoint.path, body, {"error": response.text}, elapsed, response.status_code)
                 return result
 
             # 收集流式响应行
             lines = []
-            logger.info("开始接收流式响应...")
             async for line in response.aiter_lines():
                 if line.strip():
                     lines.append(line)
-                    # 记录前几条响应用于调试
-                    if len(lines) <= 5:
-                        logger.debug(f"  [{len(lines)}] {line[:100]}...")
 
             result.response_time = time.time() - start_time
-            logger.info(f"接收完成，共 {len(lines)} 行，耗时 {result.response_time:.2f}s")
 
             # 解析响应
             answer = self._parse_streaming_response(lines)
             result.answer = answer
-            logger.info(f"解析答案 (前 100 字符): {answer[:100] if answer else '无答案'}...")
 
             # 提取 metadata 和 citations（从 event: done 的 data 中解析）
             citations = []
@@ -610,7 +574,6 @@ class QADriver:
                         data = json.loads(json_str)
                         citations = data.get("citations", [])
                         metadata = data
-                        logger.info(f"【步骤 5】完成状态：citations 数量={len(citations)}")
                     except (json.JSONDecodeError, ValueError) as e:
                         logger.debug(f"解析 done 事件失败：{e}")
                     break
@@ -619,6 +582,10 @@ class QADriver:
 
             result.citations = citations
             result.metadata = metadata
+
+            # 记录请求详情
+            elapsed = time.time() - start_time
+            self._add_request_detail("streaming_query", "POST", endpoint.path, body, {"answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
 
             result.success = True
             return result
@@ -651,6 +618,8 @@ class QADriver:
             QAResult 问答结果
         """
         result = QAResult(question=question)
+        self._current_result = result  # 设置当前结果对象，用于记录请求详情
+
         try:
             # 1. 创建新会话
             session_info = await self.create_session("New Chat")
@@ -692,6 +661,8 @@ class QADriver:
             result.success = False
             result.error = str(e)
             return result
+        finally:
+            self._current_result = None  # 清除当前结果对象
 
     async def run_batch_qa_tests(
         self,
@@ -717,20 +688,28 @@ class QADriver:
             result.end_time = datetime.now()
             return result
 
+        logger.info("=" * 60)
+        logger.info(f"开始执行问答测试，共 {result.total} 个问题，最大并发数：{max_concurrent}")
+        logger.info("=" * 60)
+
         # 并发控制
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def run_test_with_semaphore(q: tuple) -> QAResult:
+        async def run_test_with_semaphore(idx: int, q: tuple) -> QAResult:
             async with semaphore:
                 question, title = q
-                return await self.run_single_qa_test(
+                logger.info(f"[{idx + 1}/{result.total}] 开始处理：{question[:50]}...")
+                qa_result = await self.run_single_qa_test(
                     question=question,
                     knowledge_base_id=knowledge_base_id,
                     session_title=title,
                 )
+                status = "成功" if qa_result.success else "失败"
+                logger.info(f"[{idx + 1}/{result.total}] 完成：{status}, 耗时：{qa_result.response_time:.2f}s")
+                return qa_result
 
         # 执行批量测试
-        tasks = [run_test_with_semaphore(q) for q in questions]
+        tasks = [run_test_with_semaphore(idx, q) for idx, q in enumerate(questions)]
         results = await asyncio.gather(*tasks)
 
         # 统计结果
@@ -738,6 +717,11 @@ class QADriver:
         result.success = sum(1 for r in results if r.success)
         result.failed = sum(1 for r in results if not r.success)
         result.end_time = datetime.now()
+
+        logger.info("=" * 60)
+        logger.info(f"测试完成：成功 {result.success}/{result.total}, 成功率：{result.success_rate:.1%}")
+        logger.info(f"平均响应时间：{result.avg_response_time:.2f}s, P95: {result.p95_response_time:.2f}s")
+        logger.info("=" * 60)
 
         return result
 
@@ -822,19 +806,14 @@ class QADriver:
         ws = wb.active
         ws.title = "问答测试结果"
 
-        # 设置表头
-        headers = ["序号", "问题", "答案", "响应时间 (s)", "状态", "错误信息"]
-        for col, header in enumerate(headers, 1):
-            ws.cell(row=1, column=col, value=header)
+        # 设置表头（第 1 行）：第 1 列"提问"，第 2 列"生成回答"
+        ws.cell(row=1, column=1, value="提问")
+        ws.cell(row=1, column=2, value="生成回答")
 
-        # 填充数据
+        # 填充数据（从第 2 行开始）
         for row_idx, result in enumerate(results.results, 2):
-            ws.cell(row=row_idx, column=1, value=row_idx - 1)
-            ws.cell(row=row_idx, column=2, value=result.question)
-            ws.cell(row=row_idx, column=3, value=result.answer or "")
-            ws.cell(row=row_idx, column=4, value=round(result.response_time, 3) if result.response_time else 0)
-            ws.cell(row=row_idx, column=5, value="成功" if result.success else "失败")
-            ws.cell(row=row_idx, column=6, value=result.error or "")
+            ws.cell(row=row_idx, column=1, value=result.question)
+            ws.cell(row=row_idx, column=2, value=result.answer or "")
 
         # 添加统计信息
         summary_row = len(results.results) + 3

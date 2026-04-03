@@ -2,6 +2,7 @@
 测试报告生成器
 """
 
+import json
 import os
 from pathlib import Path
 from datetime import datetime
@@ -170,7 +171,7 @@ class ReportGenerator:
         # 成功回答列表
         success_results = [r for r in result.results if r.success]
         if success_results:
-            lines.append("## 回答详情")
+            lines.append("## 请求详情")
             lines.append("")
             for i, r in enumerate(success_results[:20], 1):  # 最多显示 20 个
                 lines.append(f"### Q{i}: {r.question}")
@@ -181,12 +182,35 @@ class ReportGenerator:
                     lines.append(f"**答案**: {r.answer[:500]}{'...' if len(r.answer) > 500 else ''}")
                 else:
                     lines.append("**答案**: (无答案)")
+
+                # 显示请求详情
+                if r.request_details:
+                    lines.append("")
+                    lines.append("**接口请求与响应:**")
+                    for req in r.request_details:
+                        lines.append("")
+                        lines.append(f"#### {req.get('api', 'Unknown API')} - {req.get('method', 'N/A')} {req.get('path', 'N/A')}")
+                        lines.append("")
+                        lines.append(f"- 状态码：{req.get('status_code', 'N/A')}")
+                        lines.append(f"- 耗时：{req.get('elapsed', 'N/A')}")
+                        lines.append("")
+                        lines.append("**请求体:**")
+                        lines.append("```json")
+                        lines.append(json.dumps(req.get('request_body', {}), ensure_ascii=False, indent=2))
+                        lines.append("```")
+                        lines.append("")
+                        lines.append("**响应体:**")
+                        lines.append("```json")
+                        lines.append(json.dumps(req.get('response_data', {}), ensure_ascii=False, indent=2)[:2000] + "...")
+                        lines.append("```")
+
+                # 引用来源
                 if r.citations:
                     lines.append("")
                     lines.append(f"**引用来源**: {len(r.citations)} 个")
                     for j, cite in enumerate(r.citations[:3], 1):
-                        doc_name = cite.get("document_name", cite.get("document_id", "Unknown"))
-                        lines.append(f"  {j}. {doc_name}")
+                        doc_name = cite.get("doc_id", "Unknown")[:50]
+                        lines.append(f"  {j}. {doc_name}...")
                     if len(r.citations) > 3:
                         lines.append(f"  *... 还有 {len(r.citations) - 3} 个*")
                 lines.append("")
@@ -194,7 +218,7 @@ class ReportGenerator:
                 lines.append("")
 
             if len(success_results) > 20:
-                lines.append(f"*... 还有 {len(success_results) - 20} 个回答详情未显示*")
+                lines.append(f"*... 还有 {len(success_results) - 20} 个请求详情未显示*")
                 lines.append("")
 
         return "\n".join(lines)
