@@ -16,7 +16,8 @@
       "Bash(python main.py --upload --scenario hk_customs)",
       "Bash(python main.py 知识库问答测试)",
       "Bash(python main.py --qa --scenario hk_customs)",
-      "Bash(python -u main.py 知识库问答测试)"
+      "Bash(python -u main.py 知识库问答测试)",
+      "Bash(python -u main.py --qa --scenario hk_customs)"
     ]
   }
 }
