@@ -205,7 +205,7 @@ class AutoTestAgent:
 
             # 5. 保存 Excel 结果（如果有 QA 测试）
             if result.qa_result:
-                excel_path = self._save_qa_result_to_excel(result.qa_result, intent.scenario)
+                excel_path = await self._save_qa_result_to_excel(result.qa_result, intent.scenario)
                 result.message = f"测试执行完成，报告已保存至：{result.report_path}，Excel 结果已保存至：{excel_path}"
             else:
                 result.message = f"测试执行完成，报告已保存至：{result.report_path}"
@@ -286,7 +286,7 @@ class AutoTestAgent:
 
         return result
 
-    def _save_qa_result_to_excel(self, qa_result, scenario_name: str) -> str:
+    async def _save_qa_result_to_excel(self, qa_result, scenario_name: str) -> str:
         """
         保存 QA 测试结果到 Excel 文件
 
@@ -307,7 +307,7 @@ class AutoTestAgent:
         excel_path = excel_dir / excel_filename
 
         # 保存 Excel
-        self.qa_driver.save_results_to_excel(qa_result, str(excel_path))
+        await self.qa_driver.save_results_to_excel(qa_result, str(excel_path))
 
         return str(excel_path)
 

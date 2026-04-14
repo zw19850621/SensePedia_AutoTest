@@ -42,6 +42,14 @@ endpoints:
       status_field: "status"
       parser_status_field: "parser_status"
 
+  # 文档详情查询
+  document_detail:
+    method: "GET"
+    path: "/v1/knowledge/documents/{document_id}"
+    response:
+      doc_name_field: "doc_name"
+      document_id_field: "document_id"
+
   # 文档发布/解析
   document_publish:
     method: "POST"
@@ -89,19 +97,24 @@ endpoints:
       scope_mode: "{scope_mode}"
       knowledge_base_id: "{knowledge_base_id}"
       doc_ids: []
-      chat_mode: "pipeline"
+      #chat_mode: "flex"--Flexible Skills，pipeline--Fixed Pipeline
+      chat_mode: "flex"
     response:
       message_id_field: "message_id"
 
   # 流式查询
+  # 注意：根据 rag_create_message 的 chat_mode 自动选择接口路径
+  #   flex (Flexible Skills)     → /v1/rag/flex/query/stream
+  #   pipeline (Fixed Pipeline)  → /v1/rag/query/stream
   rag_query_stream:
     method: "POST"
     path: "/v1/rag/query/stream"
     body:
-      query: "{query}"
-      top_k: 8
+      top_k: 30
       rerank: true
       stream: true
       citation_mode: "inline"
-      knowledge_base_id: "{knowledge_base_id}"
-      session_id: "{session_id}"
+      model: "qwen3.5-27b-local"
+      enable_thinking: false
+      scope_mode: "all"
+      doc_ids: []

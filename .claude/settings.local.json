@@ -25,7 +25,15 @@
       "Bash(PYTHONUTF8=1 python main.py 知识库问答测试)",
       "Bash(python -c \"import os; print\\(os.path.exists\\(r'D:\\\\测试项目\\\\Sensepedia\\\\项目版本\\\\海关 POC\\\\测试集\\\\测试集样例.xlsx'\\)\\)\")",
       "Bash(dir \"D:\\\\测试项目\\\\Sensepedia\\\\项目版本\\\\海关 POC\\\\测试集\")",
-      "Bash(findstr .xlsx)"
+      "Bash(findstr .xlsx)",
+      "Bash(mkdir -p \"d:\\\\测试项目\\\\Sensepedia\\\\SensePedia_AutoTest\\\\docs\\\\superpowers\\\\specs\")",
+      "Bash(mkdir \"d:\\\\测试项目\\\\Sensepedia\\\\SensePedia_AutoTest\\\\docs\\\\superpowers\\\\specs\")",
+      "Bash(python -m py_compile scripts/document_test.py scripts/qa_test.py)",
+      "Bash(python scripts/qa_test.py --help)",
+      "Bash(python scripts/qa_test.py --scenario hk_customs)",
+      "Bash(python -c \"from src.core.config import load_config; c = load_config\\(\\); print\\('Config loaded:', len\\(c.scenarios\\), 'scenarios'\\); s = c.get_scenario\\('hk_customs'\\); print\\('Scenario:', s.name if s else 'None'\\)\")",
+      "Bash(python scripts/qa_test.py)",
+      "Bash(python -m py_compile src/drivers/qa_driver.py src/agents/test_agent.py scripts/qa_test.py)"
     ]
   }
 }

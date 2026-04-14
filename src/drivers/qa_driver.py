@@ -125,6 +125,65 @@ class QADriver:
         """获取指定名称的端点配置"""
         return self.config.get_endpoint(name)
 
+    def _get_chat_mode(self) -> str:
+        """根据 rag_create_message 配置返回 chat_mode 值"""
+        endpoint = self._get_endpoint("rag_create_message")
+        if endpoint and endpoint.body:
+            return endpoint.body.get("chat_mode", "flex")
+        return "flex"
+
+    def _get_chat_mode_header(self) -> str:
+        """根据 rag_create_message 的 chat_mode 配置返回对应的表头"""
+        endpoint = self._get_endpoint("rag_create_message")
+        if endpoint and endpoint.body:
+            chat_mode = endpoint.body.get("chat_mode", "flex")
+            if chat_mode == "pipeline":
+                return "Fixed Pipeline"
+            else:
+                return "Flexible Skills"
+        return "Flexible Skills"
+
+    async def get_document_detail(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """
+        获取文档详情（用于查询文档名称）
+
+        Args:
+            document_id: 文档 ID
+
+        Returns:
+            文档详情字典，包含 doc_name 等字段
+        """
+        client = None
+        try:
+            auth_header = await self.auth_manager.get_auth_header()
+            endpoint = self._get_endpoint("document_detail")
+            if endpoint is None:
+                logger.warning("未找到端点配置：document_detail")
+                return None
+
+            client = HttpClient(base_url=self.config.get_base_url(endpoint.base))
+            path = self._format_path(endpoint.path, document_id=document_id)
+
+            response = await client.request(
+                method=endpoint.method,
+                path=path,
+                headers=auth_header,
+            )
+
+            if response.status_code != 200:
+                logger.debug(f"获取文档详情失败：{document_id} - {response.status_code}")
+                return None
+
+            return response.json()
+
+        except Exception as e:
+            logger.debug(f"获取文档详情异常：{document_id} - {e}")
+            return None
+
+        finally:
+            if client:
+                await client.close()
+
     def _format_path(self, path: str, **kwargs) -> str:
         """格式化路径中的占位符"""
         for key, value in kwargs.items():
@@ -504,9 +563,9 @@ class QADriver:
         query: str,
         session_id: str,
         knowledge_base_id: str = "ALL_KB",
-        top_k: int = 8,
-        rerank: bool = True,
-        citation_mode: str = "inline",
+        top_k: int = None,
+        rerank: bool = None,
+        citation_mode: str = None,
     ) -> QAResult:
         """
         流式查询并获取答案
@@ -515,9 +574,9 @@ class QADriver:
             query: 问题
             session_id: 会话 ID
             knowledge_base_id: 知识库 ID
-            top_k: 返回的顶部结果数
-            rerank: 是否重排序
-            citation_mode: 引用模式
+            top_k: 返回的顶部结果数（None 则从配置读取）
+            rerank: 是否重排序（None 则从配置读取）
+            citation_mode: 引用模式（None 则从配置读取）
 
         Returns:
             QAResult 问答结果
@@ -531,26 +590,68 @@ class QADriver:
             if endpoint is None:
                 raise Exception("未找到端点配置：rag_query_stream，请检查 config/endpoints.yaml")
 
+            # 根据 rag_create_message 的 chat_mode 决定流式查询接口路径
+            chat_mode = self._get_chat_mode()
+            if chat_mode == "pipeline":
+                query_path = "/v1/rag/query/stream"
+            else:
+                query_path = "/v1/rag/flex/query/stream"
+
+            # 从 rag_query_stream 配置中读取默认参数
+            cfg_body = endpoint.body or {}
+
+            # 优先使用运行时参数，其次使用配置值，最后使用代码默认值
+            model = cfg_body.get("model", "qwen3.5-27b-local")
+            enable_thinking = cfg_body.get("enable_thinking", False)
+            effective_top_k = top_k if top_k is not None else cfg_body.get("top_k", 8)
+            effective_rerank = rerank if rerank is not None else cfg_body.get("rerank", True)
+            effective_citation_mode = citation_mode if citation_mode is not None else cfg_body.get("citation_mode", "inline")
+            doc_ids = cfg_body.get("doc_ids", [])
+            scope_mode = cfg_body.get("scope_mode", "all")
+
             # 使用更长的超时时间（流式查询可能需要 2-5 分钟）
             client = HttpClient(
                 base_url=self.config.get_base_url(endpoint.base),
                 timeout=1200.0,  # 20 分钟超时
             )
-            body = self._build_body(
-                endpoint,
-                query=query,
-                session_id=session_id,
-                knowledge_base_id=knowledge_base_id,
-                top_k=top_k,
-                rerank=rerank,
-                citation_mode=citation_mode,
-            )
+
+            # 根据 chat_mode 构建不同的请求体（参数都从配置读取）
+            if chat_mode == "flex":
+                body = {
+                    "query": query,
+                    "session_id": session_id,
+                    "model": model,
+                    "enable_thinking": enable_thinking,
+                    "knowledge_base_id": knowledge_base_id,
+                    "doc_ids": doc_ids,
+                    "top_k": effective_top_k,
+                    "rerank": effective_rerank,
+                    "citation_mode": effective_citation_mode,
+                    "scope_mode": scope_mode,
+                }
+            else:  # pipeline
+                body = {
+                    "query": query,
+                    "top_k": effective_top_k,
+                    "rerank": effective_rerank,
+                    "stream": cfg_body.get("stream", True),
+                    "citation_mode": effective_citation_mode,
+                    "knowledge_base_id": knowledge_base_id,
+                    "session_id": session_id,
+                    "model": model,
+                    "enable_thinking": enable_thinking,
+                }
 
             start_time = time.time()
 
+            base_url = self.config.get_base_url(endpoint.base)
+            full_url = f"{base_url.rstrip('/')}{query_path}"
+            logger.info(f"流式查询请求: POST {full_url}")
+            logger.info(f"流式查询参数: {body}")
+
             response = await client.request(
                 method=endpoint.method,
-                path=endpoint.path,
+                path=query_path,
                 headers=auth_header,
                 json=body,
             )
@@ -560,7 +661,7 @@ class QADriver:
                 result.success = False
                 result.error = f"请求失败：{response.status_code} - {response.text}"
                 elapsed = time.time() - start_time
-                self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"error": response.text}, elapsed, response.status_code)
+                self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"error": response.text}, elapsed, response.status_code)
                 return result
 
             # 收集流式响应行
@@ -576,12 +677,36 @@ class QADriver:
             result.answer = answer
 
             # 提取 metadata 和 citations（从 event: done 的 data 中解析）
+            # 同时检测全流的错误事件和错误内容
             citations = []
             metadata = {}
             in_done_event = False
+            done_event_data = None
+            stream_error = None  # 从任何 event 中捕获的错误
 
-            for line in lines:
+            for i, line in enumerate(lines):
                 stripped = line.strip()
+                if not stripped:
+                    continue
+
+                # 检测 error 事件：event: error 后面紧跟 data: {...}
+                if stripped.startswith("event: error"):
+                    if i + 1 < len(lines):
+                        next_stripped = lines[i + 1].strip()
+                        if next_stripped.startswith("data: "):
+                            try:
+                                err_data = json.loads(next_stripped[6:].strip())
+                                stream_error = err_data.get("error", err_data)
+                                if isinstance(stream_error, dict):
+                                    stream_error = {
+                                        "code": stream_error.get("code", ""),
+                                        "message": stream_error.get("message", str(stream_error)),
+                                    }
+                                continue
+                            except (json.JSONDecodeError, ValueError):
+                                stream_error = {"code": "", "message": next_stripped[6:].strip()}
+                                continue
+
                 if stripped.startswith("event: done"):
                     in_done_event = True
                 elif in_done_event and stripped.startswith("data: "):
@@ -590,11 +715,81 @@ class QADriver:
                         data = json.loads(json_str)
                         citations = data.get("citations", [])
                         metadata = data
+                        done_event_data = data
                     except (json.JSONDecodeError, ValueError) as e:
                         logger.debug(f"解析 done 事件失败：{e}")
                     break
                 elif stripped.startswith("event:"):
                     in_done_event = False
+
+            # 检测 done 事件中的错误
+            if done_event_data and not stream_error:
+                # 检测 partial 状态（LLM 未生成答案，后端用 HTTP 200 包装了 LLM 失败）
+                done_status = done_event_data.get("status", "")
+                if done_status == "partial":
+                    # 从 metadata 中提取原始错误信息（如果有 event: error 的话）
+                    # partial 状态下，原始错误可能在 metadata 或之前的 event 中
+                    # 如果没有具体错误，保留 done 事件全部内容供排查
+                    raw_error = json.dumps(done_event_data, ensure_ascii=False)
+                    error_msg = f"LLM 未生成回答（后端返回 partial）\n{raw_error}"
+                    logger.error(f"流式查询返回 partial 状态：{raw_error}")
+                    stream_error = {"code": "PARTIAL", "message": error_msg}
+                    result.answer = answer  # 保留空答案
+                else:
+                    error_info = done_event_data.get("error", None)
+                    error_code = done_event_data.get("error_code", None) or done_event_data.get("code", None)
+                    if error_info:
+                        error_msg = error_info if isinstance(error_info, str) else error_info.get("message", str(error_info))
+                        stream_error = {"code": error_code, "message": error_msg}
+                    elif error_code:
+                        error_msg = done_event_data.get("error_message", "") or done_event_data.get("message", "")
+                        stream_error = {"code": error_code, "message": error_msg}
+
+            # 检测答案内容是否是错误 JSON（兜底）
+            if not stream_error and answer:
+                try:
+                    answer_json = json.loads(answer)
+                    if "error" in answer_json:
+                        err = answer_json["error"]
+                        error_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                        error_code = err.get("code", "") if isinstance(err, dict) else ""
+                        stream_error = {"code": error_code, "message": error_msg}
+                    # 检测直接嵌套的错误结构（如 DashScope 格式）
+                    elif isinstance(answer_json, dict) and "error" in answer_json and isinstance(answer_json["error"], dict):
+                        err = answer_json["error"]
+                        stream_error = {"code": err.get("code", ""), "message": err.get("message", str(err))}
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+                # 检测答案内容中是否包含已知错误关键词（如错误被嵌入 delta 中）
+                if not stream_error:
+                    error_keywords = ["quota exceeded", "throttling", "rate limit", "too many requests",
+                                      "DashScope returned HTTP", "hour allocated quota exceeded"]
+                    for keyword in error_keywords:
+                        if keyword.lower() in answer.lower():
+                            stream_error = {"code": "", "message": answer.strip()[:500]}
+                            break
+
+            # 如果有错误，标记失败并返回
+            if stream_error:
+                error_code = stream_error.get("code", "")
+                error_msg = stream_error.get("message", str(stream_error))
+                logger.error(f"流式查询返回错误：{error_code} - {error_msg}")
+                result.success = False
+                result.error = f"{error_code}: {error_msg}" if error_code else error_msg
+                # 将原始错误信息存入 metadata 供 Excel 写入时提取
+                result.metadata = {
+                    "stream_error": {
+                        "code": error_code,
+                        "message": error_msg,
+                        "raw_error": done_event_data if done_event_data else stream_error,
+                    }
+                }
+                result.citations = citations
+                elapsed = time.time() - start_time
+                raw_response = "\n".join(lines)
+                self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+                return result
 
             result.citations = citations
             result.metadata = metadata
@@ -602,7 +797,7 @@ class QADriver:
             # 记录请求详情 - 保存原始流式响应
             elapsed = time.time() - start_time
             raw_response = "\n".join(lines)  # 原始 SSE 格式响应
-            self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+            self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
 
             result.success = True
             return result
@@ -713,6 +908,7 @@ class QADriver:
 
         # 并发控制
         semaphore = asyncio.Semaphore(max_concurrent)
+        interrupted = False  # 标记是否被中断
 
         async def run_test_with_semaphore(idx: int, q: tuple) -> QAResult:
             async with semaphore:
@@ -732,18 +928,51 @@ class QADriver:
                 logger.info(f"[{idx + 1}/{result.total}] 完成：{status}, 耗时：{qa_result.response_time:.2f}s")
                 return qa_result
 
-        # 执行批量测试
-        tasks = [run_test_with_semaphore(idx, q) for idx, q in enumerate(questions)]
-        results = await asyncio.gather(*tasks)
+        # 创建所有任务
+        tasks = [asyncio.ensure_future(run_test_with_semaphore(idx, q)) for idx, q in enumerate(questions)]
 
-        # 统计结果
-        result.results = list(results)
-        result.success = sum(1 for r in results if r.success)
-        result.failed = sum(1 for r in results if not r.success)
+        try:
+            # 使用 asyncio.wait 等待所有任务完成，支持中断时保留已完成的结果
+            pending = set(tasks)
+            completed_results: List[QAResult] = []
+
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    if not task.cancelled() and not task.exception():
+                        completed_results.append(task.result())
+                    elif task.exception():
+                        logger.error(f"任务异常：{task.exception()}")
+
+            # 正常完成
+            result.results = completed_results
+
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # 中断时收集已完成任务的结果
+            logger.warning("测试被中断，保存已完成的测试结果...")
+            interrupted = True
+            for task in tasks:
+                if task.done() and not task.cancelled() and not task.exception():
+                    try:
+                        r = task.result()
+                        if r not in completed_results:
+                            completed_results.append(r)
+                    except Exception:
+                        pass
+                else:
+                    task.cancel()
+            result.results = completed_results
+
+        # 统计结果（包括中断时的部分结果）
+        result.success = sum(1 for r in result.results if r.success)
+        result.failed = sum(1 for r in result.results if not r.success)
         result.end_time = datetime.now()
 
         logger.info("=" * 60)
-        logger.info(f"测试完成：成功 {result.success}/{result.total}, 成功率：{result.success_rate:.1%}")
+        if interrupted:
+            logger.info(f"测试被中断：已完成 {len(result.results)}/{result.total}, 成功 {result.success}, 失败 {result.failed}")
+        else:
+            logger.info(f"测试完成：成功 {result.success}/{result.total}, 成功率：{result.success_rate:.1%}")
         logger.info(f"平均响应时间：{result.avg_response_time:.2f}s, P95: {result.p95_response_time:.2f}s")
         logger.info("=" * 60)
 
@@ -810,11 +1039,12 @@ class QADriver:
         wb.close()
         return questions
 
-    def save_results_to_excel(
+    async def save_results_to_excel(
         self,
         results: BatchQAResult,
         output_path: str,
         template_path: str = None,
+        resolve_doc_names: bool = True,  # 是否解析文档名称
     ) -> str:
         """
         将问答结果保存到 Excel
@@ -848,13 +1078,43 @@ class QADriver:
         cell_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
 
         # 设置表头（第 1 行）：编号 | 提问 | 生成回答 | 响应时间 | 引用文档
-        headers = ["编号", "提问", "生成回答", "响应时间", "引用文档"]
+        # 根据 rag_create_message 的 chat_mode 配置动态设置第 3 列表头
+        chat_mode_header = self._get_chat_mode_header()
+        headers = ["编号", "提问", chat_mode_header, "响应时间", "引用文档"]
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=header)
             cell.font = header_font
             cell.alignment = cell_alignment
 
         # 填充数据（从第 2 行开始）
+        # 如果需要解析文档名称，先收集所有文档 ID
+        doc_name_cache = {}
+        if resolve_doc_names:
+            all_doc_ids = set()
+            for result in results.results:
+                citations = result.citations or (result.metadata.get('citations', []) if result.metadata else [])
+                for cite in citations:
+                    if isinstance(cite, dict):
+                        doc_id = cite.get('doc_id', '')
+                        if doc_id:
+                            all_doc_ids.add(doc_id)
+
+            # 批量查询文档名称
+            if all_doc_ids:
+                logger.info(f"正在查询 {len(all_doc_ids)} 个文档名称...")
+                for doc_id in all_doc_ids:
+                    detail = await self.get_document_detail(doc_id)
+                    if detail:
+                        doc_name = detail.get('doc_name', '')
+                        if doc_name:
+                            # 用原始 doc_id 作为 key，确保查找一致
+                            doc_name_cache[doc_id] = doc_name
+                        else:
+                            logger.debug(f"文档 {doc_id} 查询成功但无 doc_name: {detail}")
+                    else:
+                        logger.warning(f"文档 {doc_id} 查询失败（可能不存在或无权限）")
+                logger.info(f"已缓存 {len(doc_name_cache)}/{len(all_doc_ids)} 个文档名称")
+
         for row_idx, result in enumerate(results.results, 2):
             # 第 1 列：编号
             id_cell = ws.cell(row=row_idx, column=1, value=result.question_id or "")
@@ -879,33 +1139,81 @@ class QADriver:
             # 第 5 列：引用文档（从 citations 中提取）
             citations_text = ""
             if result.citations:
-                citation_ids = []
+                citation_lines = []
                 for cite in result.citations:
                     if isinstance(cite, dict):
-                        # 使用 doc_id 作为引用文档 ID
                         doc_id = cite.get('doc_id', '')
                         ref_id = cite.get('ref_id', '')
                         if doc_id:
-                            # 格式：ref_1:doc_xxx
-                            citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
+                            # 格式：ref_1:doc_xxx 和 ref_1:文档名 两行
+                            doc_name = doc_name_cache.get(doc_id, '')
+                            if ref_id:
+                                citation_lines.append(f"{ref_id}:{doc_id}")
+                                if doc_name:
+                                    citation_lines.append(f"{ref_id}:{doc_name}")
+                            else:
+                                citation_lines.append(doc_id)
+                                if doc_name:
+                                    citation_lines.append(doc_name)
                     elif isinstance(cite, str):
-                        citation_ids.append(cite)
-                citations_text = "\n".join(citation_ids)
+                        citation_lines.append(cite)
+                citations_text = "\n".join(citation_lines)
 
             # 如果 citations_text 为空，尝试从 metadata 中获取
             if not citations_text and result.metadata:
                 metadata_citations = result.metadata.get('citations', [])
                 if metadata_citations:
-                    citation_ids = []
+                    citation_lines = []
                     for cite in metadata_citations:
                         if isinstance(cite, dict):
                             doc_id = cite.get('doc_id', '')
                             ref_id = cite.get('ref_id', '')
                             if doc_id:
-                                citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
+                                # 格式：ref_1:doc_xxx 和 ref_1:文档名 两行
+                                doc_name = doc_name_cache.get(doc_id, '')
+                                if ref_id:
+                                    citation_lines.append(f"{ref_id}:{doc_id}")
+                                    if doc_name:
+                                        citation_lines.append(f"{ref_id}:{doc_name}")
+                                else:
+                                    citation_lines.append(doc_id)
+                                    if doc_name:
+                                        citation_lines.append(doc_name)
                         elif isinstance(cite, str):
-                            citation_ids.append(cite)
-                    citations_text = "\n".join(citation_ids)
+                            citation_lines.append(cite)
+                    citations_text = "\n".join(citation_lines)
+
+            # 测试失败时，在引用文档列记录失败信息
+            if not result.success:
+                fail_info_parts = []
+                # 优先从 metadata 中提取流式查询原始错误
+                if result.metadata and "stream_error" in result.metadata:
+                    stream_err = result.metadata["stream_error"]
+                    raw_err = stream_err.get("raw_error", stream_err)
+                    if isinstance(raw_err, dict):
+                        fail_info_parts.append(f"【流式查询错误】{json.dumps(raw_err, ensure_ascii=False)}")
+                    else:
+                        fail_info_parts.append(f"【流式查询错误】{raw_err}")
+                elif result.request_details:
+                    for req_detail in result.request_details:
+                        api_name = req_detail.get("api", "")
+                        status = req_detail.get("status_code", "")
+                        resp = req_detail.get("response_data", {})
+                        elapsed = req_detail.get("elapsed", "")
+                        # 记录非成功响应 或 无状态码（网络异常/超时等）
+                        if not status or (status != 200 and status != 201):
+                            status_label = f"HTTP {status}" if status else "未返回"
+                            fail_info_parts.append(f"【{api_name}】{status_label} | 耗时 {elapsed}")
+                            if isinstance(resp, dict) and "error" in resp:
+                                fail_info_parts.append(f"  响应: {json.dumps(resp, ensure_ascii=False)[:500]}")
+                            elif isinstance(resp, dict):
+                                fail_info_parts.append(f"  响应: {json.dumps(resp, ensure_ascii=False)[:300]}")
+                # 如果没有任何错误记录，记录全局错误
+                if not fail_info_parts and result.error:
+                    fail_info_parts.append(f"【异常】{result.error}")
+                if fail_info_parts:
+                    fail_info = "\n".join(fail_info_parts)
+                    citations_text = (citations_text + "\n\n" + fail_info) if citations_text else fail_info
 
             cite_cell = ws.cell(row=row_idx, column=5, value=citations_text)
             cite_cell.font = cell_font
@@ -961,9 +1269,10 @@ class QADriver:
         output_dir = Path(qa_config.testset_path).parent / "results"
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = output_dir / f"qa_test_results_{timestamp}.xlsx"
+        chat_mode_name = self._get_chat_mode_header()
+        output_path = output_dir / f"{chat_mode_name}_{timestamp}.xlsx"
 
-        self.save_results_to_excel(
+        await self.save_results_to_excel(
             results=results,
             output_path=str(output_path),
             template_path=qa_config.testset_path,
