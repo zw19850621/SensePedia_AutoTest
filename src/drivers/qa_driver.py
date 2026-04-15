@@ -661,7 +661,11 @@ class QADriver:
                 result.success = False
                 result.error = f"请求失败：{response.status_code} - {response.text}"
                 elapsed = time.time() - start_time
+<<<<<<< HEAD
                 self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"error": response.text}, elapsed, response.status_code)
+=======
+                self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"error": response.text}, elapsed, response.status_code)
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
                 return result
 
             # 收集流式响应行
@@ -797,7 +801,11 @@ class QADriver:
             # 记录请求详情 - 保存原始流式响应
             elapsed = time.time() - start_time
             raw_response = "\n".join(lines)  # 原始 SSE 格式响应
+<<<<<<< HEAD
             self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+=======
+            self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
 
             result.success = True
             return result
@@ -1078,9 +1086,13 @@ class QADriver:
         cell_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
 
         # 设置表头（第 1 行）：编号 | 提问 | 生成回答 | 响应时间 | 引用文档
+<<<<<<< HEAD
         # 根据 rag_create_message 的 chat_mode 配置动态设置第 3 列表头
         chat_mode_header = self._get_chat_mode_header()
         headers = ["编号", "提问", chat_mode_header, "响应时间", "引用文档"]
+=======
+        headers = ["编号", "提问", "生成回答", "响应时间", "引用文档"]
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=header)
             cell.font = header_font
@@ -1139,6 +1151,7 @@ class QADriver:
             # 第 5 列：引用文档（从 citations 中提取）
             citations_text = ""
             if result.citations:
+<<<<<<< HEAD
                 citation_lines = []
                 for cite in result.citations:
                     if isinstance(cite, dict):
@@ -1158,17 +1171,36 @@ class QADriver:
                     elif isinstance(cite, str):
                         citation_lines.append(cite)
                 citations_text = "\n".join(citation_lines)
+=======
+                citation_ids = []
+                for cite in result.citations:
+                    if isinstance(cite, dict):
+                        # 使用 doc_id 作为引用文档 ID
+                        doc_id = cite.get('doc_id', '')
+                        ref_id = cite.get('ref_id', '')
+                        if doc_id:
+                            # 格式：ref_1:doc_xxx
+                            citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
+                    elif isinstance(cite, str):
+                        citation_ids.append(cite)
+                citations_text = "\n".join(citation_ids)
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
 
             # 如果 citations_text 为空，尝试从 metadata 中获取
             if not citations_text and result.metadata:
                 metadata_citations = result.metadata.get('citations', [])
                 if metadata_citations:
+<<<<<<< HEAD
                     citation_lines = []
+=======
+                    citation_ids = []
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
                     for cite in metadata_citations:
                         if isinstance(cite, dict):
                             doc_id = cite.get('doc_id', '')
                             ref_id = cite.get('ref_id', '')
                             if doc_id:
+<<<<<<< HEAD
                                 # 格式：ref_1:doc_xxx 和 ref_1:文档名 两行
                                 doc_name = doc_name_cache.get(doc_id, '')
                                 if ref_id:
@@ -1214,6 +1246,12 @@ class QADriver:
                 if fail_info_parts:
                     fail_info = "\n".join(fail_info_parts)
                     citations_text = (citations_text + "\n\n" + fail_info) if citations_text else fail_info
+=======
+                                citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
+                        elif isinstance(cite, str):
+                            citation_ids.append(cite)
+                    citations_text = "\n".join(citation_ids)
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
 
             cite_cell = ws.cell(row=row_idx, column=5, value=citations_text)
             cite_cell.font = cell_font

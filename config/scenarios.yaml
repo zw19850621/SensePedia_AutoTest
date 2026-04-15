@@ -12,7 +12,11 @@ scenarios:
 
     document_upload:
       enabled: true
+<<<<<<< HEAD
       base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步 (1219)"
+=======
+      base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关 POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步 (1219)"
+>>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
       file_types: ["pdf", "docx", "md", "txt"]
       language: "zh-cn"
       visibility: "private"
