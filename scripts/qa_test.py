@@ -120,6 +120,10 @@ async def main():
     auth_manager = AuthManager(config)
     await auth_manager.login()
 
+    # 初始化请求日志记录器
+    from src.drivers.qa_driver import setup_request_logger
+    setup_request_logger()
+
     # 初始化驱动器
     driver = QADriver(config, auth_manager)
 
@@ -127,6 +131,7 @@ async def main():
     results = None
     output_dir = None
     template_path = None
+    scenario = None
 
     if args.scenario:
         # 指定场景
@@ -255,6 +260,10 @@ async def main():
             print(f"平均响应时间：{results.avg_response_time:.2f}s")
             print(f"P95 响应时间：{results.p95_response_time:.2f}s")
         print(f"总耗时：{results.duration:.2f}s")
+        # 列出失败的问题编号
+        if results.failed > 0:
+            failed_ids = [r.question_id for r in results.results if not r.success]
+            print(f"\n失败的问题编号：{', '.join(str(fid) for fid in failed_ids if fid)}")
         print(f"\n结果已保存至：{output_path}")
         print(f"{'='*60}\n")
 

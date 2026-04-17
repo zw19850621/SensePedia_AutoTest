@@ -19,6 +19,60 @@ from ..core.client import HttpClient
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# no-answer 关键词列表（与前端 NO_ANSWER_PATTERNS_ZH 保持一致）
+NO_ANSWER_PATTERNS = [
+    "未能找到相關資料", "未能找到相关资料",
+    "沒有找到相關", "没有找到相关",
+    "沒有相關資料", "没有相关资料",
+    "提供的參考資料中沒有", "提供的参考资料中没有",
+    "參考資料中沒有關於", "参考资料中没有关于",
+    "無法回答", "无法回答",
+    "沒有相關信息", "没有相关信息",
+    "找不到相關", "找不到相关"
+]
+
+# 信封模板
+ENVELOPE_TEMPLATE_ZH = """敬啟者：
+
+抱歉，未能找到相關資料
+
+香港海關"""
+
+ENVELOPE_TEMPLATE_EN = """Dear Sir/Madam,
+
+Sorry, no relevant information was found.
+
+Hong Kong Customs"""
+
+# 配置流式查询请求日志文件
+def setup_request_logger(log_dir: str = "logs"):
+    """配置流式查询请求日志记录器"""
+    request_logger = logging.getLogger("qa_request")
+    request_logger.setLevel(logging.INFO)
+    request_logger.propagate = False  # 避免重复打印
+
+    # 清除已有的 handlers
+    request_logger.handlers.clear()
+
+    # 创建日志目录
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    # 添加文件处理器
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_handler = logging.FileHandler(
+        log_path / f"qa_request_{timestamp}.log",
+        encoding="utf-8"
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+
+    request_logger.addHandler(file_handler)
+    return request_logger
+
+# 全局请求日志记录器
+request_logger = logging.getLogger("qa_request")
+
 
 @dataclass
 class SessionInfo:
@@ -41,11 +95,24 @@ class MessageInfo:
 
 
 @dataclass
+class FinalAnswer:
+    """最终答复结构（与前端 UI 对齐）"""
+    answer_type: str = "empty"  # "intent_email" | "no_answer" | "rag_answer" | "error" | "empty"
+    display_body: str = ""       # UI 实际渲染的完整 markdown
+    plain_text: str = ""         # 剥掉信封头尾后的纯文字
+    lang: str = "zh-hk"
+    intent_quote: Dict[str, str] = field(default_factory=dict)  # {"intent_id": "", "intent_name": ""}
+    citations: List[dict] = field(default_factory=list)
+    raw_answer: str = ""         # 原始 LLM 回答（未处理前）
+
+
+@dataclass
 class QAResult:
     """单次问答结果"""
     question: str = ""
     success: bool = False
     answer: Optional[str] = None
+    answer_type: str = "empty"  # "intent_email" | "no_answer" | "rag_answer" | "error" | "empty"
     response_time: float = 0.0
     citations: List[dict] = field(default_factory=list)
     error: Optional[str] = None
@@ -120,6 +187,10 @@ class QADriver:
         """
         self.config = config
         self.auth_manager = auth_manager
+
+    def _get_debug_sse_log(self) -> bool:
+        """获取 debug_sse_log 配置"""
+        return getattr(self.config, 'debug_sse_log', False)
 
     def _get_endpoint(self, name: str) -> Optional[EndpointConfig]:
         """获取指定名称的端点配置"""
@@ -519,22 +590,27 @@ class QADriver:
             if client:
                 await client.close()
 
-    def _parse_streaming_response(self, lines: List[str]) -> str:
+    def _parse_streaming_response(self, lines: List[str], alert_keywords: List[str] = None) -> FinalAnswer:
         """
-        解析流式响应，拼接所有 token 事件的 delta 字段
-        SSE 格式：
-          event: token
-          data: {"request_id": "...", "delta": "..."}
+        解析流式响应，按优先级提取最终答复（与前端 UI 对齐）
+        路径优先级：
+          A. intent_email 事件 → 答复 = event.body，type = intent_email
+          B. done.status == "no_answer" 且无 token → 答复 = 信封模板，type = no_answer
+          C. 聚合 token 后匹配 no-answer 关键词 → 答复 = 信封模板，type = no_answer
+          D. 正常聚合 token → 答复 = 聚合文本，type = rag_answer
 
         Args:
             lines: 流式响应的行列表
+            alert_keywords: 异常检测关键字列表
 
         Returns:
-            拼接后的完整答案
+            FinalAnswer 结构
         """
         answer_parts = []
         token_count = 0
         current_event = None
+        done_status = None
+        intent_email_data = None
 
         for line in lines:
             stripped = line.strip()
@@ -544,19 +620,138 @@ class QADriver:
             # 解析 SSE 格式：event: xxx 或 data: xxx
             if stripped.startswith("event: "):
                 current_event = stripped[7:].strip()
-            elif stripped.startswith("data: ") and current_event == "token":
+            elif stripped.startswith("data: "):
                 json_str = stripped[6:].strip()
                 try:
                     data = json.loads(json_str)
-                    if "delta" in data:
-                        answer_parts.append(data["delta"])
+
+                    # 路径 A：intent_email 事件
+                    if current_event == "intent_email" and "body" in data:
+                        intent_email_data = data
+                        continue  # 继续处理 done 事件
+
+                    # 记录 done 状态
+                    if current_event == "done":
+                        done_status = data.get("status")
+
+                    # 拼接 token 事件的 delta
+                    elif current_event == "token" and "delta" in data:
+                        delta = data["delta"]
+                        answer_parts.append(delta)
                         token_count += 1
+                        # 检测异常关键字
+                        if alert_keywords:
+                            for keyword in alert_keywords:
+                                if keyword in delta:
+                                    logger.warning(f"检测到异常关键字 '{keyword}'：{delta[:200]}...")
+                                    break
+
                 except (json.JSONDecodeError, ValueError) as e:
                     logger.debug(f"解析 data 失败：{json_str[:100]}... 错误：{e}")
 
-        answer = "".join(answer_parts)
-        #logger.info(f"解析完成：共 {len(lines)} 行，其中 {token_count} 行 token 事件，拼接后答案长度：{len(answer)}")
-        return answer
+        raw_answer = "".join(answer_parts)
+
+        # 路径 A：intent_email 事件
+        if intent_email_data:
+            body = intent_email_data.get("body", "")
+            lang = intent_email_data.get("lang", "zh-hk")
+            intent_quote = intent_email_data.get("intent_quote", {})
+            # 从 intent_quote.intent_name 提取引用文档（一定记录）
+            intent_citations = self._parse_intent_name(intent_quote)
+            # 如果 body 是 no-answer 信封，记录告警但仍记录引用文档
+            if body.strip() == ENVELOPE_TEMPLATE_ZH.strip():
+                logger.warning(
+                    f"[{question_id}] intent_email 事件，但 body 为 no-answer 信封，"
+                    f"仍记录 {len(intent_citations)} 条引用文档"
+                )
+            return FinalAnswer(
+                answer_type="intent_email",
+                display_body=body,
+                plain_text=self._strip_envelope(body, lang),
+                lang=lang,
+                intent_quote=intent_quote if isinstance(intent_quote, dict) else {},
+                citations=intent_citations,
+                raw_answer=raw_answer
+            )
+
+        # 路径 B：done.status == "no_answer" 且无 token
+        if done_status == "no_answer" and token_count == 0:
+            return FinalAnswer(
+                answer_type="no_answer",
+                display_body=ENVELOPE_TEMPLATE_ZH,
+                plain_text="抱歉，未能找到相關資料",
+                lang="zh-hk",
+                intent_quote={},
+                citations=[],
+                raw_answer=raw_answer
+            )
+
+        # 路径 C：聚合 token 后匹配 no-answer 关键词
+        if raw_answer and self._contains_no_answer(raw_answer):
+            return FinalAnswer(
+                answer_type="no_answer",
+                display_body=ENVELOPE_TEMPLATE_ZH,
+                plain_text="抱歉，未能找到相關資料",
+                lang="zh-hk",
+                intent_quote={},
+                citations=[],
+                raw_answer=raw_answer
+            )
+
+        # 路径 D：正常 RAG 回答
+        return FinalAnswer(
+            answer_type="rag_answer",
+            display_body=raw_answer,
+            plain_text=raw_answer,
+            lang="zh-hk",
+            intent_quote={},
+            citations=[],
+            raw_answer=raw_answer
+        )
+
+    def _parse_intent_name(self, intent_quote: Dict[str, Any]) -> List[Dict[str, str]]:
+        """
+        从 intent_quote.intent_name 提取引用文档列表
+
+        Args:
+            intent_quote: {"intent_id": "", "intent_name": "名称1, 名称2, ..."}
+
+        Returns:
+            [{"name": "名称1"}, {"name": "名称2"}, ...]
+        """
+        citations = []
+        intent_name = intent_quote.get("intent_name", "") if isinstance(intent_quote, dict) else ""
+        if intent_name:
+            # 去掉 "Possible Intent: " 前缀
+            if intent_name.startswith("Possible Intent: "):
+                intent_name = intent_name[17:]
+            # 按逗号分割，每项作为一条引用
+            intent_items = [item.strip() for item in intent_name.split(",") if item.strip()]
+            for item in intent_items:
+                citations.append({"name": item})
+        return citations
+
+    def _contains_no_answer(self, text: str) -> bool:
+        """检查文本是否包含 no-answer 关键词"""
+        for pattern in NO_ANSWER_PATTERNS:
+            if pattern in text:
+                return True
+        return False
+
+    def _strip_envelope(self, text: str, lang: str = "zh-hk") -> str:
+        """剥掉信封头尾，返回纯文字"""
+        if lang == "en-us":
+            # 英文信封格式
+            prefix = "Dear Sir/Madam,\n\n"
+            suffix = "\n\nHong Kong Customs"
+        else:
+            # 中文信封格式
+            prefix = "敬啟者：\n\n"
+            suffix = "\n\n香港海關"
+
+        if text.startswith(prefix) and text.endswith(suffix):
+            return text[len(prefix):-len(suffix)].strip()
+        return text
 
     async def streaming_query(
         self,
@@ -566,6 +761,7 @@ class QADriver:
         top_k: int = None,
         rerank: bool = None,
         citation_mode: str = None,
+        question_id: str = None,
     ) -> QAResult:
         """
         流式查询并获取答案
@@ -577,11 +773,12 @@ class QADriver:
             top_k: 返回的顶部结果数（None 则从配置读取）
             rerank: 是否重排序（None 则从配置读取）
             citation_mode: 引用模式（None 则从配置读取）
+            question_id: 问题编号（用于日志追踪）
 
         Returns:
             QAResult 问答结果
         """
-        result = QAResult(question=query, session_id=session_id)
+        result = QAResult(question=query, session_id=session_id, question_id=question_id)
         client = None
 
         try:
@@ -608,6 +805,7 @@ class QADriver:
             effective_citation_mode = citation_mode if citation_mode is not None else cfg_body.get("citation_mode", "inline")
             doc_ids = cfg_body.get("doc_ids", [])
             scope_mode = cfg_body.get("scope_mode", "all")
+            alert_keywords = cfg_body.get("alert_keywords", [])
 
             # 使用更长的超时时间（流式查询可能需要 2-5 分钟）
             client = HttpClient(
@@ -646,8 +844,14 @@ class QADriver:
 
             base_url = self.config.get_base_url(endpoint.base)
             full_url = f"{base_url.rstrip('/')}{query_path}"
-            logger.info(f"流式查询请求: POST {full_url}")
-            logger.info(f"流式查询参数: {body}")
+
+            # 记录请求到文件
+            request_logger.info(f"=== REQUEST ===")
+            request_logger.info(f"问题ID: {result.question_id}")
+            request_logger.info(f"问题: {query}")
+            request_logger.info(f"URL: POST {full_url}")
+            request_logger.info(f"Headers: {json.dumps(dict(auth_header), ensure_ascii=False)}")
+            request_logger.info(f"Body: {json.dumps(body, ensure_ascii=False, indent=2)}")
 
             response = await client.request(
                 method=endpoint.method,
@@ -661,11 +865,7 @@ class QADriver:
                 result.success = False
                 result.error = f"请求失败：{response.status_code} - {response.text}"
                 elapsed = time.time() - start_time
-<<<<<<< HEAD
                 self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"error": response.text}, elapsed, response.status_code)
-=======
-                self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"error": response.text}, elapsed, response.status_code)
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
                 return result
 
             # 收集流式响应行
@@ -677,15 +877,15 @@ class QADriver:
             result.response_time = time.time() - start_time
 
             # 解析响应
-            answer = self._parse_streaming_response(lines)
-            result.answer = answer
+            final_answer = self._parse_streaming_response(lines, alert_keywords)
+            result.answer = final_answer.display_body
+            result.answer_type = final_answer.answer_type
 
-            # 提取 metadata 和 citations（从 event: done 的 data 中解析）
-            # 同时检测全流的错误事件和错误内容
+            # 提取 citations（从 event: done 的 data 中解析）
             citations = []
             metadata = {}
-            in_done_event = False
             done_event_data = None
+            in_done_event = False
             stream_error = None  # 从任何 event 中捕获的错误
 
             for i, line in enumerate(lines):
@@ -738,7 +938,7 @@ class QADriver:
                     error_msg = f"LLM 未生成回答（后端返回 partial）\n{raw_error}"
                     logger.error(f"流式查询返回 partial 状态：{raw_error}")
                     stream_error = {"code": "PARTIAL", "message": error_msg}
-                    result.answer = answer  # 保留空答案
+                    result.answer_type = "error"  # 标记为错误类型
                 else:
                     error_info = done_event_data.get("error", None)
                     error_code = done_event_data.get("error_code", None) or done_event_data.get("code", None)
@@ -750,9 +950,9 @@ class QADriver:
                         stream_error = {"code": error_code, "message": error_msg}
 
             # 检测答案内容是否是错误 JSON（兜底）
-            if not stream_error and answer:
+            if not stream_error and final_answer.display_body:
                 try:
-                    answer_json = json.loads(answer)
+                    answer_json = json.loads(final_answer.display_body)
                     if "error" in answer_json:
                         err = answer_json["error"]
                         error_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
@@ -770,8 +970,8 @@ class QADriver:
                     error_keywords = ["quota exceeded", "throttling", "rate limit", "too many requests",
                                       "DashScope returned HTTP", "hour allocated quota exceeded"]
                     for keyword in error_keywords:
-                        if keyword.lower() in answer.lower():
-                            stream_error = {"code": "", "message": answer.strip()[:500]}
+                        if keyword.lower() in final_answer.display_body.lower():
+                            stream_error = {"code": "", "message": final_answer.display_body.strip()[:500]}
                             break
 
             # 如果有错误，标记失败并返回
@@ -781,6 +981,7 @@ class QADriver:
                 logger.error(f"流式查询返回错误：{error_code} - {error_msg}")
                 result.success = False
                 result.error = f"{error_code}: {error_msg}" if error_code else error_msg
+                result.answer_type = "error"
                 # 将原始错误信息存入 metadata 供 Excel 写入时提取
                 result.metadata = {
                     "stream_error": {
@@ -789,23 +990,69 @@ class QADriver:
                         "raw_error": done_event_data if done_event_data else stream_error,
                     }
                 }
-                result.citations = citations
+                # 错误时使用 FinalAnswer 中的 citations
+                if final_answer.citations:
+                    result.citations = final_answer.citations
+                else:
+                    result.citations = citations
                 elapsed = time.time() - start_time
                 raw_response = "\n".join(lines)
-                self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+                self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": final_answer.display_body, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+
+                # 记录错误响应到文件
+                request_logger.info(f"=== RESPONSE (ERROR) ===")
+                request_logger.info(f"问题ID: {result.question_id}")
+                request_logger.info(f"错误: {error_code} - {error_msg}")
+                request_logger.info(f"响应状态码: {response.status_code}")
+                request_logger.info(f"响应内容: {raw_response}")
+                request_logger.info("=" * 50)
+
                 return result
 
-            result.citations = citations
+            # 使用 FinalAnswer 中的 citations
+            # no_answer 类型不需要提取引用文档
+            if final_answer.answer_type == "no_answer":
+                result.citations = []
+            elif final_answer.citations:
+                result.citations = final_answer.citations
+            elif citations:
+                result.citations = citations
+            else:
+                result.citations = []
             result.metadata = metadata
 
             # 记录请求详情 - 保存原始流式响应
             elapsed = time.time() - start_time
             raw_response = "\n".join(lines)  # 原始 SSE 格式响应
-<<<<<<< HEAD
-            self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
-=======
-            self._add_request_detail(result, "streaming_query", "POST", endpoint.path, body, {"raw": raw_response, "answer": answer, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
+            self._add_request_detail(result, "streaming_query", "POST", query_path, body, {"raw": raw_response, "answer": final_answer.display_body, "citations": citations, "metadata": metadata}, elapsed, response.status_code)
+
+            # 记录成功响应到文件
+            request_logger.info(f"=== RESPONSE (SUCCESS) ===")
+            request_logger.info(f"问题ID: {result.question_id}")
+            request_logger.info(f"答复类型: {result.answer_type}")
+            request_logger.info(f"答复长度: {len(result.answer) if result.answer else 0}")
+            request_logger.info(f"答复内容: {(result.answer or '')[:200]!r}")
+            request_logger.info(f"引用文档数: {len(result.citations)}")
+
+            # 始终记录异常情况的详细信息
+            if result.citations and result.answer:
+                # 检查是否包含 no-answer 相关内容
+                no_answer_keywords = ["抱歉", "未能找到", "相關資料"]
+                has_no_answer = any(kw in result.answer for kw in no_answer_keywords)
+                if has_no_answer:
+                    request_logger.warning(f"【异常】答复包含 no-answer 内容但仍有引用文档，请检查")
+                    request_logger.warning(f"完整答复: {result.answer!r}")
+                    request_logger.warning(f"引用文档: {result.citations}")
+                    # 如果开启了 debug_sse_log，额外记录完整 SSE 响应
+                    if self._get_debug_sse_log():
+                        request_logger.warning(f"完整 SSE 响应: {raw_response}")
+
+            # 如果开启了 debug_sse_log，额外记录完整 SSE 响应
+            if self._get_debug_sse_log():
+                request_logger.info(f"【DEBUG】完整 SSE 响应:")
+                request_logger.info(raw_response)
+
+            request_logger.info("=" * 50)
 
             result.success = True
             return result
@@ -859,8 +1106,9 @@ class QADriver:
             result.message_id = message_info.message_id
 
             # 5. 流式查询获取答案
-            qa_result = await self.streaming_query(question, session_id, knowledge_base_id)
+            qa_result = await self.streaming_query(question, session_id, knowledge_base_id, question_id=question_id)
             result.answer = qa_result.answer
+            result.answer_type = qa_result.answer_type
             result.response_time = qa_result.response_time
             result.metadata = qa_result.metadata
             result.citations = qa_result.citations
@@ -1086,13 +1334,9 @@ class QADriver:
         cell_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
 
         # 设置表头（第 1 行）：编号 | 提问 | 生成回答 | 响应时间 | 引用文档
-<<<<<<< HEAD
         # 根据 rag_create_message 的 chat_mode 配置动态设置第 3 列表头
         chat_mode_header = self._get_chat_mode_header()
         headers = ["编号", "提问", chat_mode_header, "响应时间", "引用文档"]
-=======
-        headers = ["编号", "提问", "生成回答", "响应时间", "引用文档"]
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=header)
             cell.font = header_font
@@ -1127,7 +1371,10 @@ class QADriver:
                         logger.warning(f"文档 {doc_id} 查询失败（可能不存在或无权限）")
                 logger.info(f"已缓存 {len(doc_name_cache)}/{len(all_doc_ids)} 个文档名称")
 
-        for row_idx, result in enumerate(results.results, 2):
+        # 按原始编号排序（按 question_id 的自然顺序）
+        sorted_results = sorted(results.results, key=lambda r: r.question_id or "")
+
+        for row_idx, result in enumerate(sorted_results, 2):
             # 第 1 列：编号
             id_cell = ws.cell(row=row_idx, column=1, value=result.question_id or "")
             id_cell.font = cell_font
@@ -1149,71 +1396,63 @@ class QADriver:
             time_cell.alignment = cell_alignment
 
             # 第 5 列：引用文档（从 citations 中提取）
+            # no_answer 类型不需要提取引用文档
             citations_text = ""
-            if result.citations:
-<<<<<<< HEAD
+            answer_type = getattr(result, 'answer_type', '') or ''
+            if answer_type != "no_answer" and result.citations:
                 citation_lines = []
                 for cite in result.citations:
                     if isinstance(cite, dict):
+                        # 优先使用 name 字段（intent_email 引用）
+                        name = cite.get('name', '')
+                        if name:
+                            ref_id = cite.get('ref_id', '')
+                            citation_lines.append((ref_id, f"{ref_id}:{name}" if ref_id else name))
+                            continue
+                        # 否则使用 doc_id 查找文档名称
                         doc_id = cite.get('doc_id', '')
                         ref_id = cite.get('ref_id', '')
                         if doc_id:
-                            # 格式：ref_1:doc_xxx 和 ref_1:文档名 两行
                             doc_name = doc_name_cache.get(doc_id, '')
-                            if ref_id:
-                                citation_lines.append(f"{ref_id}:{doc_id}")
-                                if doc_name:
-                                    citation_lines.append(f"{ref_id}:{doc_name}")
-                            else:
-                                citation_lines.append(doc_id)
-                                if doc_name:
-                                    citation_lines.append(doc_name)
+                            # 只记录文档名称，不记录 doc_id
+                            if doc_name:
+                                citation_lines.append((ref_id, f"{ref_id}:{doc_name}" if ref_id else doc_name))
+                            elif doc_id:
+                                citation_lines.append((ref_id, f"{ref_id}:{doc_id}" if ref_id else doc_id))
                     elif isinstance(cite, str):
-                        citation_lines.append(cite)
-                citations_text = "\n".join(citation_lines)
-=======
-                citation_ids = []
-                for cite in result.citations:
-                    if isinstance(cite, dict):
-                        # 使用 doc_id 作为引用文档 ID
-                        doc_id = cite.get('doc_id', '')
-                        ref_id = cite.get('ref_id', '')
-                        if doc_id:
-                            # 格式：ref_1:doc_xxx
-                            citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
-                    elif isinstance(cite, str):
-                        citation_ids.append(cite)
-                citations_text = "\n".join(citation_ids)
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
+                        citation_lines.append((None, cite))
+                # 按 ref_id 数字排序（没有 ref_id 的放在最后）
+                citation_lines.sort(key=lambda x: (0 if x[0] and '_' in x[0] else 1, int(x[0].split('_')[1]) if x[0] and '_' in x[0] else 0))
+                citations_text = "\n".join([line[1] for line in citation_lines])
 
-            # 如果 citations_text 为空，尝试从 metadata 中获取
-            if not citations_text and result.metadata:
+            # 如果 citations_text 为空，且不是 no_answer，尝试从 metadata 中获取
+            if not citations_text and answer_type != "no_answer" and result.metadata:
                 metadata_citations = result.metadata.get('citations', [])
                 if metadata_citations:
-<<<<<<< HEAD
                     citation_lines = []
-=======
-                    citation_ids = []
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
                     for cite in metadata_citations:
                         if isinstance(cite, dict):
+                            # 优先使用 name 字段（intent_email 引用）
+                            name = cite.get('name', '')
+                            if name:
+                                ref_id = cite.get('ref_id', '')
+                                citation_lines.append((ref_id, f"{ref_id}:{name}" if ref_id else name))
+                                continue
+                            # 否则使用 doc_id 查找文档名称
                             doc_id = cite.get('doc_id', '')
                             ref_id = cite.get('ref_id', '')
                             if doc_id:
-<<<<<<< HEAD
-                                # 格式：ref_1:doc_xxx 和 ref_1:文档名 两行
                                 doc_name = doc_name_cache.get(doc_id, '')
-                                if ref_id:
-                                    citation_lines.append(f"{ref_id}:{doc_id}")
-                                    if doc_name:
-                                        citation_lines.append(f"{ref_id}:{doc_name}")
-                                else:
-                                    citation_lines.append(doc_id)
-                                    if doc_name:
-                                        citation_lines.append(doc_name)
+                                # 只记录文档名称，不记录 doc_id
+                                if doc_name:
+                                    citation_lines.append((ref_id, f"{ref_id}:{doc_name}" if ref_id else doc_name))
+                                elif doc_id:
+                                    citation_lines.append((ref_id, f"{ref_id}:{doc_id}" if ref_id else doc_id))
                         elif isinstance(cite, str):
-                            citation_lines.append(cite)
-                    citations_text = "\n".join(citation_lines)
+                            citation_lines.append((None, cite))
+                    # 按 ref_id 数字排序（没有 ref_id 的放在最后）
+                    citation_lines.sort(key=lambda x: (0 if x[0] and '_' in x[0] else 1, int(x[0].split('_')[1]) if x[0] and '_' in x[0] else 0))
+                    citations_text = "\n".join([line[1] for line in citation_lines])
 
             # 测试失败时，在引用文档列记录失败信息
             if not result.success:
@@ -1246,12 +1485,6 @@ class QADriver:
                 if fail_info_parts:
                     fail_info = "\n".join(fail_info_parts)
                     citations_text = (citations_text + "\n\n" + fail_info) if citations_text else fail_info
-=======
-                                citation_ids.append(f"{ref_id}:{doc_id}" if ref_id else doc_id)
-                        elif isinstance(cite, str):
-                            citation_ids.append(cite)
-                    citations_text = "\n".join(citation_ids)
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
 
             cite_cell = ws.cell(row=row_idx, column=5, value=citations_text)
             cite_cell.font = cell_font

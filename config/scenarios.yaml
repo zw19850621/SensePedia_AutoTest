@@ -3,6 +3,7 @@
 # 全局配置
 global:
   report_output_dir: "D:\\测试项目\\Sensepedia\\reports"  # 测试报告输出目录
+  debug_sse_log: true  # 是否记录完整 SSE 响应日志（用于调试）
 
 scenarios:
   hk_customs:
@@ -12,11 +13,7 @@ scenarios:
 
     document_upload:
       enabled: true
-<<<<<<< HEAD
       base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步 (1219)"
-=======
-      base_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关 POC\\香港海关文本库文档\\香港海关文本库_现场环境全量同步 (1219)"
->>>>>>> 49908992903b80666c2c2410b1ef2e5b63497299
       file_types: ["pdf", "docx", "md", "txt"]
       language: "zh-cn"
       visibility: "private"
@@ -24,7 +21,7 @@ scenarios:
 
     qa_test:
       enabled: true
-      testset_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\测试集\\测试集样例.xlsx"
+      testset_path: "D:\\测试项目\\Sensepedia\\项目版本\\海关POC\\测试集\\测试集指定问题.xlsx"
       sheet_name: null        # Excel 工作表名称（null 表示使用默认第一个工作表）
       id_column: 1            # 编号所在列（1-based）
       question_column: 2      # 问题所在列（1-based）

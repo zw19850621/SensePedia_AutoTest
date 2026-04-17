@@ -71,6 +71,7 @@ class Config:
     scenarios: dict = field(default_factory=dict)
     rules: dict = field(default_factory=dict)
     report_output_dir: str = "./reports"  # 测试报告输出目录
+    debug_sse_log: bool = False  # 全局 SSE 调试日志开关
 
     def get_endpoint(self, name: str) -> Optional[EndpointConfig]:
         """获取指定名称的端点配置"""
@@ -177,5 +178,6 @@ def load_config(config_dir: str = None) -> Config:
             # 加载全局配置
             global_config = data.get("global", {})
             config.report_output_dir = global_config.get("report_output_dir", "./reports")
+            config.debug_sse_log = global_config.get("debug_sse_log", False)
 
     return config

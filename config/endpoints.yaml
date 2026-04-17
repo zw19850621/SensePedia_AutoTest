@@ -118,3 +118,7 @@ endpoints:
       enable_thinking: false
       scope_mode: "all"
       doc_ids: []
+      # 异常检测关键字：提取答案时如果 data.delta 包含这些关键字则打印告警
+      alert_keywords:
+        - "已达到最大工具调用轮次"
+        - "工具调用失败"
